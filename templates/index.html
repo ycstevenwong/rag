@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>card-rag — technical document chat</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <aside class="sidebar">
+    <h1 class="brand">card-rag</h1>
+    <p class="meta">{{ provider }} · {{ model }}</p>
+
+    <section class="upload">
+      <h2>Documents</h2>
+      <form id="upload-form">
+        <label class="file-drop" for="file-input">
+          <span>Drop file or click</span>
+          <small>pdf · docx · pptx · xlsx · txt · md</small>
+          <input id="file-input" type="file" accept=".pdf,.docx,.pptx,.xlsx,.txt,.md" />
+        </label>
+        <progress id="upload-progress" max="100" value="0" hidden></progress>
+        <div id="upload-status" class="status"></div>
+      </form>
+      <ul id="doc-list" class="doc-list"></ul>
+    </section>
+
+    <section class="session">
+      <h2>Session</h2>
+      <div class="session-controls">
+        <code id="session-id">—</code>
+        <button id="new-session" type="button">New</button>
+      </div>
+    </section>
+  </aside>
+
+  <main class="chat">
+    <div id="messages" class="messages"></div>
+    <form id="chat-form" class="composer">
+      <textarea
+        id="message-input"
+        placeholder="Ask about your documents… (Enter to send, Shift+Enter for newline)"
+        rows="2"
+        required
+      ></textarea>
+      <button type="submit" id="send-btn">Send</button>
+    </form>
+  </main>
+
+  <aside id="sources-panel" class="sources">
+    <header>
+      <h2>Sources</h2>
+      <button id="close-sources" type="button" hidden>×</button>
+    </header>
+    <div id="sources-list" class="sources-list">
+      <p class="empty">Cited sources will appear here.</p>
+    </div>
+  </aside>
+
+  <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
