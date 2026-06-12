@@ -1,42 +1,39 @@
-"""Thin wrapper around sentence-transformers with lazy model loading."""
+"""Embedder that calls an Ollama HTTP endpoint."""
 from __future__ import annotations
 
-from threading import Lock
 from typing import Sequence
 
 import numpy as np
+import requests
 
 
 class Embedder:
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, base_url: str):
         self.model_name = model_name
-        self._model = None
-        self._lock = Lock()
-
-    def _load(self):
-        with self._lock:
-            if self._model is None:
-                from sentence_transformers import SentenceTransformer
-                self._model = SentenceTransformer(self.model_name)
-        return self._model
+        self.base_url = base_url.rstrip("/")
+        self._dim: int | None = None
 
     @property
     def dim(self) -> int:
-        return self._load().get_sentence_embedding_dimension()
+        if self._dim is None:
+            self._dim = self.encode(["probe"]).shape[1]
+        return self._dim
 
     def encode(self, texts: Sequence[str], *, batch_size: int = 32) -> np.ndarray:
-        model = self._load()
-        vectors = model.encode(
-            list(texts),
-            batch_size=batch_size,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )
-        return vectors.astype(np.float32, copy=False)
+        vectors = []
+        for text in texts:
+            resp = requests.post(
+                f"{self.base_url}/api/embeddings",
+                json={"model": self.model_name, "prompt": text},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            vectors.append(resp.json()["embedding"])
+        arr = np.array(vectors, dtype=np.float32)
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        return arr / np.maximum(norms, 1e-10)
 
     def encode_query(self, text: str) -> np.ndarray:
-        # BGE models recommend a query instruction for retrieval.
         if "bge" in self.model_name.lower():
             text = "Represent this sentence for searching relevant passages: " + text
         return self.encode([text])[0]

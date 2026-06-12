@@ -27,7 +27,7 @@ def create_app() -> Flask:
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_UPLOAD_MB * 1024 * 1024
 
-    embedder = Embedder(cfg.EMBEDDING_MODEL)
+    embedder = Embedder(cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BASE_URL)
     vector_store = FaissStore(
         vectors_path=cfg.VECTORS_PATH,
         chunks_path=cfg.CHUNKS_PATH,

@@ -28,7 +28,8 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-base-en-v1.5")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", OLLAMA_BASE_URL)
 
 CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
