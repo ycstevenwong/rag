@@ -8,8 +8,7 @@ from typing import Iterator
 
 from . import config_facade as cfg
 from .citations import build_context_block
-from .llm import get_provider
-from .llm.base import LLMProvider
+from .llm import LLMProvider
 from .retriever import HybridRetriever
 
 SYSTEM_PROMPT = """You answer technical questions using ONLY the provided context.
@@ -38,7 +37,7 @@ class ChatService:
 
     def _get_provider(self) -> LLMProvider:
         if self._provider is None:
-            self._provider = get_provider(cfg.LLM_PROVIDER, cfg.LLM_MODEL)
+            self._provider = LLMProvider(cfg.LLM_MODEL, cfg.LLM_BASE_URL)
         return self._provider
 
     def chat_stream(

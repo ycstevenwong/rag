@@ -22,14 +22,11 @@ CHUNKS_PATH = INDEX_DIR / "chunks.json"
 DOCS_PATH = INDEX_DIR / "docs.json"
 BM25_PATH = INDEX_DIR / "bm25.pkl"
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "anthropic").lower()
-LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-4-6")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1")
 
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", LLM_BASE_URL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
-EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", OLLAMA_BASE_URL)
 
 CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))

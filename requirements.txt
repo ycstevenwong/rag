@@ -6,15 +6,10 @@ python-docx>=1.1
 python-pptx>=0.6.23
 openpyxl>=3.1
 tiktoken>=0.7
-sentence-transformers>=2.7
 faiss-cpu>=1.8
 rank-bm25>=0.2.2
 numpy>=1.26
-
-# LLM SDKs (install only the ones you use)
-anthropic>=0.34
-openai>=1.40
-ollama>=0.3
+requests>=2.31
 
 # Dev
 pytest>=8

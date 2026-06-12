@@ -41,7 +41,7 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index() -> str:
-        return render_template("index.html", provider=cfg.LLM_PROVIDER, model=cfg.LLM_MODEL)
+        return render_template("index.html", model=cfg.LLM_MODEL)
 
     @app.get("/docs")
     def list_docs():
