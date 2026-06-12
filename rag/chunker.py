@@ -14,15 +14,13 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
-import tiktoken
-
 from .parsers import Block
-
-_ENCODER = tiktoken.get_encoding("cl100k_base")
 
 
 def count_tokens(text: str) -> int:
-    return len(_ENCODER.encode(text))
+    # Rough heuristic: ~4 chars per token for English text. Good enough for
+    # chunk-size control; we don't need byte-perfect counts here.
+    return max(1, len(text) // 4)
 
 
 @dataclass
@@ -135,9 +133,9 @@ def _split_long_text(text: str, target_tokens: int) -> list[str]:
             current = []
             current_tokens = 0
         if st > target_tokens:
-            tokens = _ENCODER.encode(sent)
-            for i in range(0, len(tokens), target_tokens):
-                pieces.append(_ENCODER.decode(tokens[i : i + target_tokens]))
+            char_window = target_tokens * 4
+            for i in range(0, len(sent), char_window):
+                pieces.append(sent[i : i + char_window])
             continue
         current.append(sent)
         current_tokens += st
@@ -151,8 +149,7 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
     for i in range(1, len(chunks)):
         prev = chunks[i - 1]
         cur = chunks[i]
-        prev_tokens = _ENCODER.encode(prev.text)
-        tail = _ENCODER.decode(prev_tokens[-overlap_tokens:])
+        tail = prev.text[-(overlap_tokens * 4):]
         new_text = (tail + "\n\n" + cur.text).strip()
         out.append(Chunk(
             text=new_text,

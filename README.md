@@ -76,7 +76,7 @@ pytest -q
 ```
 
 Note: `test_retriever.py` requires FAISS and uses a stub embedder so it does
-not hit the embedding endpoint. `test_chunker.py` only needs `tiktoken`.
+not hit the embedding endpoint. `test_chunker.py` has no external dependencies.
 
 ## Configuration
 
