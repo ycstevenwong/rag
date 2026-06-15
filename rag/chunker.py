@@ -149,7 +149,7 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
     for i in range(1, len(chunks)):
         prev = chunks[i - 1]
         cur = chunks[i]
-        tail = prev.text[-(overlap_tokens * 4):]
+        tail = _tail_at_boundary(prev.text, overlap_tokens * 4)
         new_text = (tail + "\n\n" + cur.text).strip()
         out.append(Chunk(
             text=new_text,
@@ -157,3 +157,15 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
             meta=cur.meta,
         ))
     return out
+
+
+def _tail_at_boundary(text: str, max_chars: int) -> str:
+    """Return a tail of ~max_chars, snapped to paragraph > sentence > word."""
+    if len(text) <= max_chars:
+        return text
+    window = text[len(text) - max_chars:]
+    for pattern in (r"\n\n+", r"[.!?]\s+", r"\s"):
+        m = re.search(pattern, window)
+        if m is not None:
+            return window[m.end():].lstrip()
+    return window
