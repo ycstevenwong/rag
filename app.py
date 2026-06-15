@@ -64,8 +64,9 @@ def create_app() -> Flask:
         try:
             result = ingest.ingest(dest, original_filename=f.filename)
         except Exception as exc:
-            dest.unlink(missing_ok=True)
             return jsonify({"error": str(exc)}), 500
+        finally:
+            dest.unlink(missing_ok=True)
         return jsonify(result)
 
     @app.delete("/docs/<doc_id>")
