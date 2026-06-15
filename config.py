@@ -24,6 +24,7 @@ BM25_PATH = INDEX_DIR / "bm25.pkl"
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1")
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", LLM_BASE_URL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
