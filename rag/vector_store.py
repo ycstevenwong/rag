@@ -130,7 +130,7 @@ class FaissStore:
             _atomic_write_bytes(self.vectors_path, lambda p: faiss.write_index(self._index, str(p)))
             _atomic_write_text(
                 self.chunks_path,
-                json.dumps([asdict(c) for c in self.chunks], ensure_ascii=False),
+                json.dumps([asdict(c) for c in self.chunks], ensure_ascii=False, indent=2),
             )
             _atomic_write_text(
                 self.docs_path,
