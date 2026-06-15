@@ -6,6 +6,8 @@ build citations later (page number, slide number, heading path, sheet name).
 """
 from __future__ import annotations
 
+import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -47,12 +49,17 @@ def parse_pdf(path: Path) -> list[Block]:
     from pypdf import PdfReader
 
     reader = PdfReader(str(path))
-    blocks: list[Block] = []
-    for page_num, page in enumerate(reader.pages, start=1):
+    pages_text: list[str] = []
+    for page in reader.pages:
         try:
-            text = page.extract_text() or ""
+            pages_text.append(page.extract_text() or "")
         except Exception:
-            text = ""
+            pages_text.append("")
+
+    pages_text = _strip_repeating_lines(pages_text, min_frac=0.5)
+
+    blocks: list[Block] = []
+    for page_num, text in enumerate(pages_text, start=1):
         for para in _split_paragraphs(text):
             blocks.append(Block(text=para, kind="paragraph", meta={"page": page_num}))
     return blocks
@@ -190,3 +197,43 @@ def _split_paragraphs(text: str) -> list[str]:
     if not parts:
         parts = [line.strip() for line in text.splitlines() if line.strip()]
     return parts
+
+
+def _strip_repeating_lines(pages_text: list[str], min_frac: float = 0.5) -> list[str]:
+    """Remove running headers/footers that repeat at the top or bottom of pages.
+
+    A line is treated as a header/footer if a digit-normalized version of it
+    appears among the first or last non-empty lines of at least `min_frac` of
+    the pages. Needs at least 3 pages to engage.
+    """
+    if len(pages_text) < 3:
+        return pages_text
+
+    def norm(line: str) -> str:
+        return re.sub(r"\d+", "#", line.strip())
+
+    page_lines = [p.splitlines() for p in pages_text]
+    top_counts: Counter[str] = Counter()
+    bot_counts: Counter[str] = Counter()
+    for lines in page_lines:
+        non_empty = [l for l in lines if l.strip()]
+        for l in non_empty[:2]:
+            top_counts[norm(l)] += 1
+        for l in non_empty[-2:]:
+            bot_counts[norm(l)] += 1
+
+    threshold = max(2, int(min_frac * len(pages_text)))
+    top_repeats = {k for k, v in top_counts.items() if v >= threshold}
+    bot_repeats = {k for k, v in bot_counts.items() if v >= threshold}
+    if not top_repeats and not bot_repeats:
+        return pages_text
+
+    cleaned: list[str] = []
+    for lines in page_lines:
+        i, j = 0, len(lines)
+        while i < j and (not lines[i].strip() or norm(lines[i]) in top_repeats):
+            i += 1
+        while j > i and (not lines[j - 1].strip() or norm(lines[j - 1]) in bot_repeats):
+            j -= 1
+        cleaned.append("\n".join(lines[i:j]))
+    return cleaned
