@@ -40,11 +40,11 @@ class DocRecord:
 
 
 class FaissStore:
-    def __init__(self, vectors_path: Path, chunks_path: Path, docs_path: Path, dim: int):
+    def __init__(self, vectors_path: Path, chunks_path: Path, docs_path: Path):
         self.vectors_path = vectors_path
         self.chunks_path = chunks_path
         self.docs_path = docs_path
-        self.dim = dim
+        self.dim: int | None = None
         self._lock = threading.RLock()
         self.chunks: list[ChunkRecord] = []
         self.docs: list[DocRecord] = []
@@ -56,8 +56,7 @@ class FaissStore:
 
         if self.vectors_path.exists():
             self._index = faiss.read_index(str(self.vectors_path))
-        else:
-            self._index = faiss.IndexFlatIP(self.dim)
+            self.dim = self._index.d
 
         if self.chunks_path.exists():
             data = json.loads(self.chunks_path.read_text())
@@ -67,8 +66,13 @@ class FaissStore:
             self.docs = [DocRecord(**d) for d in data]
 
     def add(self, vectors: np.ndarray, records: list[ChunkRecord]) -> None:
+        import faiss
+
         assert vectors.shape[0] == len(records)
         with self._lock:
+            if self._index is None:
+                self.dim = int(vectors.shape[1])
+                self._index = faiss.IndexFlatIP(self.dim)
             self._index.add(vectors)
             self.chunks.extend(records)
 

@@ -39,7 +39,6 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
         vectors_path=tmp_path / "v.faiss",
         chunks_path=tmp_path / "c.json",
         docs_path=tmp_path / "d.json",
-        dim=StubEmbedder.dim,
     )
     bm25_store = BM25Store(tmp_path / "bm25.pkl")
     embedder = StubEmbedder()

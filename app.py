@@ -32,7 +32,6 @@ def create_app() -> Flask:
         vectors_path=cfg.VECTORS_PATH,
         chunks_path=cfg.CHUNKS_PATH,
         docs_path=cfg.DOCS_PATH,
-        dim=embedder.dim,
     )
     bm25_store = BM25Store(cfg.BM25_PATH)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
