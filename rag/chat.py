@@ -103,7 +103,8 @@ class ChatService:
         prompt = REWRITE_PROMPT.format(history=history_text, question=question)
         try:
             return provider.complete(prompt, max_tokens=128).strip() or question
-        except Exception:
+        except Exception as exc:
+            print(f"[rewrite_query] fallback to original question: {type(exc).__name__}: {exc}", flush=True)
             return question
 
 

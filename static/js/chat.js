@@ -11,6 +11,7 @@
   const uploadStatus = document.getElementById("upload-status");
   const uploadProgress = document.getElementById("upload-progress");
   const sourcesListEl = document.getElementById("sources-list");
+  const rewrittenQueryEl = document.getElementById("rewritten-query");
 
   let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
   let currentSources = [];
@@ -27,6 +28,8 @@
     sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     messagesEl.innerHTML = "";
     sourcesListEl.innerHTML = '<p class="empty">Cited sources will appear here.</p>';
+    rewrittenQueryEl.hidden = true;
+    rewrittenQueryEl.innerHTML = "";
     currentSources = [];
   });
 
@@ -161,6 +164,7 @@
       sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     } else if (evt.type === "sources") {
       currentSources = evt.sources || [];
+      renderRewrittenQuery(evt.rewritten_query);
       renderSources(currentSources);
     } else if (evt.type === "delta") {
       onDelta(evt.text);
@@ -210,7 +214,20 @@
     });
   }
 
+  function renderRewrittenQuery(q) {
+    if (!q) {
+      rewrittenQueryEl.hidden = true;
+      rewrittenQueryEl.innerHTML = "";
+      return;
+    }
+    rewrittenQueryEl.hidden = false;
+    rewrittenQueryEl.innerHTML = `<span class="label">Searched for</span>${escapeHtml(q)}`;
+  }
+
   function renderSources(sources) {
+    sourcesListEl.classList.remove("flash");
+    void sourcesListEl.offsetWidth;
+    sourcesListEl.classList.add("flash");
     sourcesListEl.innerHTML = "";
     if (!sources.length) {
       sourcesListEl.innerHTML = '<p class="empty">No sources retrieved.</p>';
