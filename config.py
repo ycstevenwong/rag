@@ -27,6 +27,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1")
 
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", LLM_BASE_URL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
 
 CHUNK_TOKENS = int(os.getenv("CHUNK_TOKENS", "600"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
