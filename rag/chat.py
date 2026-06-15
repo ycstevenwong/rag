@@ -117,7 +117,7 @@ def _load_session(session_id: str) -> list[dict]:
     if not p.exists():
         return []
     try:
-        return json.loads(p.read_text())
+        return json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return []
 
@@ -125,7 +125,7 @@ def _load_session(session_id: str) -> list[dict]:
 def _save_session(session_id: str, history: list[dict]) -> None:
     p = _session_path(session_id)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(history, ensure_ascii=False, indent=2))
+    p.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _trim_history(history: list[dict], max_turns: int) -> list[dict]:

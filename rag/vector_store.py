@@ -59,10 +59,10 @@ class FaissStore:
             self.dim = self._index.d
 
         if self.chunks_path.exists():
-            data = json.loads(self.chunks_path.read_text())
+            data = json.loads(self.chunks_path.read_text(encoding="utf-8"))
             self.chunks = [ChunkRecord(**c) for c in data]
         if self.docs_path.exists():
-            data = json.loads(self.docs_path.read_text())
+            data = json.loads(self.docs_path.read_text(encoding="utf-8"))
             self.docs = [DocRecord(**d) for d in data]
 
     def add(self, vectors: np.ndarray, records: list[ChunkRecord]) -> None:
