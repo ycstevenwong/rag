@@ -8,12 +8,14 @@ Usage:
         --source-type manual --tags product-x,v3.2,en               # explicit metadata
     python scripts/ingest_corpus.py data/corpus/ --by-path          # infer from folders
 
-With --by-path, each file's source_type and app_code are derived from
-its location under the target directory using the convention:
+With --by-path, each file's source_type, app_code, version, and
+functionality are derived from its location under the target directory
+using the convention:
 
-    <target>/<source_type>/<app_code>/.../file.ext
+    <target>/<source_type>/<app_code>/<version>/<functionality>/file.ext
 
-Files shallower than that fall back to --source-type / --app-code.
+Files shallower than that fall back to --source-type / --app-code /
+--version / --functionality (each level is independently optional).
 
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
@@ -54,16 +56,21 @@ def collect_files(path: Path) -> list[Path]:
     return []
 
 
-def infer_from_path(file_path: Path, root: Path) -> tuple[str | None, str | None]:
-    """Return (source_type, app_code) from <root>/<source_type>/<app_code>/.../file."""
+def infer_from_path(
+    file_path: Path, root: Path
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Return (source_type, app_code, version, functionality) from
+    <root>/<source_type>/<app_code>/<version>/<functionality>/.../file."""
     try:
         rel = file_path.relative_to(root)
     except ValueError:
-        return (None, None)
+        return (None, None, None, None)
     parts = rel.parts
     source_type = parts[0].strip().lower() if len(parts) >= 2 else None
     app_code = parts[1].strip() if len(parts) >= 3 else None
-    return (source_type, app_code)
+    version = parts[2].strip() if len(parts) >= 4 else None
+    functionality = parts[3].strip() if len(parts) >= 5 else None
+    return (source_type, app_code, version, functionality)
 
 
 def main() -> int:
@@ -90,9 +97,19 @@ def main() -> int:
         help="App code applied to every file (must match a value in config.APP_CODES if filtering by it)",
     )
     parser.add_argument(
+        "--version",
+        default="",
+        help="Version applied to every file (e.g. 'v1', 'v2')",
+    )
+    parser.add_argument(
+        "--functionality",
+        default="",
+        help="Functionality applied to every file (e.g. 'login', 'token'). Used with APP_VERSION_MAP at query time.",
+    )
+    parser.add_argument(
         "--by-path",
         action="store_true",
-        help="Infer source_type and app_code per file from <target>/<source_type>/<app_code>/...",
+        help="Infer all four fields per file from <target>/<source_type>/<app_code>/<version>/<functionality>/...",
     )
     args = parser.parse_args()
 
@@ -100,6 +117,8 @@ def main() -> int:
     default_source_type = args.source_type.strip().lower()
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     default_app_code = args.app_code.strip()
+    default_version = args.version.strip()
+    default_functionality = args.functionality.strip()
 
     if not target.exists():
         print(f"Path not found: {target}", file=sys.stderr)
@@ -136,8 +155,10 @@ def main() -> int:
 
         source_type = default_source_type
         app_code = default_app_code
+        version = default_version
+        functionality = default_functionality
         if args.by_path and target.is_dir():
-            inf_st, inf_ac = infer_from_path(file_path, target)
+            inf_st, inf_ac, inf_ver, inf_fn = infer_from_path(file_path, target)
             if inf_st:
                 source_type = inf_st
                 if source_type not in KNOWN_SOURCE_TYPES:
@@ -146,7 +167,11 @@ def main() -> int:
                 app_code = inf_ac
                 if cfg.APP_CODES and app_code not in cfg.APP_CODES:
                     print(f"  WARNING: inferred app_code {app_code!r} not in config.APP_CODES")
-            print(f"  source_type={source_type} app_code={app_code or '-'}")
+            if inf_ver:
+                version = inf_ver
+            if inf_fn:
+                functionality = inf_fn
+            print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
 
         try:
             for event in ingest.ingest_stream(
@@ -155,6 +180,8 @@ def main() -> int:
                 source_type=source_type,
                 tags=tags,
                 app_code=app_code,
+                version=version,
+                functionality=functionality,
             ):
                 t = event["type"]
                 if t == "stage":

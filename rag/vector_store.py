@@ -40,6 +40,8 @@ class DocRecord:
     source_type: str = "other"
     tags: list[str] = field(default_factory=list)
     app_code: str = ""
+    version: str = ""
+    functionality: str = ""
 
 
 class FaissStore:

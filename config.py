@@ -47,3 +47,22 @@ APP_CODES = [
     # "app-a",
     # "app-b",
 ]
+
+# Per-app version map for manuals.
+# Keys: app_code (must also appear in APP_CODES).
+# Inner keys: functionality name (free-form, set at ingest time).
+# Inner values: the "current truth" version for that functionality.
+# Use "*" as the inner key to set a default for any functionality not
+# explicitly listed. When the user picks an app_code at query time,
+# the retriever auto-filters manual chunks to the right version per
+# functionality using this map.
+APP_VERSION_MAP: dict[str, dict[str, str]] = {
+    # "auth-svc": {
+    #     "login": "v2",
+    #     "token": "v1",
+    #     "*":     "v2",
+    # },
+    # "billing-svc": {
+    #     "*": "v1",
+    # },
+}

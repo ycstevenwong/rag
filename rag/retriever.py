@@ -4,6 +4,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+from . import config_facade as cfg
 from .bm25_store import BM25Store
 from .embeddings import Embedder
 from .vector_store import ChunkRecord, DocRecord, FaissStore
@@ -105,14 +106,22 @@ class HybridRetriever:
 
 
 def _doc_matches(doc: DocRecord, filters: dict) -> bool:
+    """Filter semantics: empty value on the doc = "universal" (passes any filter
+    for that field). Non-empty must match the user's choice. Version is
+    auto-resolved per (app_code, functionality) via APP_VERSION_MAP."""
     st = filters.get("source_type")
-    if st and doc.source_type != st:
+    if st and doc.source_type and doc.source_type != st:
         return False
     app_code = filters.get("app_code")
-    if app_code and doc.app_code != app_code:
+    if app_code and doc.app_code and doc.app_code != app_code:
         return False
+    if app_code and doc.app_code == app_code:
+        version_map = cfg.APP_VERSION_MAP.get(app_code) or {}
+        effective_version = version_map.get(doc.functionality, version_map.get("*"))
+        if effective_version and doc.version and doc.version != effective_version:
+            return False
     tags = filters.get("tags") or []
-    if tags:
+    if tags and doc.tags:
         doc_tags = set(doc.tags)
         for t in tags:
             if t not in doc_tags:
