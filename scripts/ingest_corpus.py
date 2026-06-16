@@ -5,7 +5,15 @@ Usage:
     python scripts/ingest_corpus.py path/to/docs/                   # custom directory
     python scripts/ingest_corpus.py path/to/file.pdf                # single file
     python scripts/ingest_corpus.py docs/manuals/ \\
-        --source-type manual --tags product-x,v3.2,en               # with metadata
+        --source-type manual --tags product-x,v3.2,en               # explicit metadata
+    python scripts/ingest_corpus.py data/corpus/ --by-path          # infer from folders
+
+With --by-path, each file's source_type and app_code are derived from
+its location under the target directory using the convention:
+
+    <target>/<source_type>/<app_code>/.../file.ext
+
+Files shallower than that fall back to --source-type / --app-code.
 
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
@@ -32,6 +40,7 @@ from rag.vector_store import FaissStore
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
 DEFAULT_CORPUS_DIR = ROOT / "data" / "corpus"
+KNOWN_SOURCE_TYPES = {"manual", "spec", "other"}
 
 
 def collect_files(path: Path) -> list[Path]:
@@ -43,6 +52,18 @@ def collect_files(path: Path) -> list[Path]:
             if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS
         )
     return []
+
+
+def infer_from_path(file_path: Path, root: Path) -> tuple[str | None, str | None]:
+    """Return (source_type, app_code) from <root>/<source_type>/<app_code>/.../file."""
+    try:
+        rel = file_path.relative_to(root)
+    except ValueError:
+        return (None, None)
+    parts = rel.parts
+    source_type = parts[0].strip().lower() if len(parts) >= 2 else None
+    app_code = parts[1].strip() if len(parts) >= 3 else None
+    return (source_type, app_code)
 
 
 def main() -> int:
@@ -68,12 +89,17 @@ def main() -> int:
         default="",
         help="App code applied to every file (must match a value in config.APP_CODES if filtering by it)",
     )
+    parser.add_argument(
+        "--by-path",
+        action="store_true",
+        help="Infer source_type and app_code per file from <target>/<source_type>/<app_code>/...",
+    )
     args = parser.parse_args()
 
     target = Path(args.path).resolve()
-    source_type = args.source_type.strip().lower()
+    default_source_type = args.source_type.strip().lower()
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
-    app_code = args.app_code.strip()
+    default_app_code = args.app_code.strip()
 
     if not target.exists():
         print(f"Path not found: {target}", file=sys.stderr)
@@ -107,6 +133,21 @@ def main() -> int:
             file_path.relative_to(target) if target.is_dir() else file_path.name
         )
         print(f"[{i}/{len(files)}] {label}")
+
+        source_type = default_source_type
+        app_code = default_app_code
+        if args.by_path and target.is_dir():
+            inf_st, inf_ac = infer_from_path(file_path, target)
+            if inf_st:
+                source_type = inf_st
+                if source_type not in KNOWN_SOURCE_TYPES:
+                    print(f"  WARNING: inferred source_type {source_type!r} not in {sorted(KNOWN_SOURCE_TYPES)}")
+            if inf_ac:
+                app_code = inf_ac
+                if cfg.APP_CODES and app_code not in cfg.APP_CODES:
+                    print(f"  WARNING: inferred app_code {app_code!r} not in config.APP_CODES")
+            print(f"  source_type={source_type} app_code={app_code or '-'}")
+
         try:
             for event in ingest.ingest_stream(
                 file_path,
