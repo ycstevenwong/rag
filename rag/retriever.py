@@ -117,9 +117,11 @@ def _doc_matches(doc: DocRecord, filters: dict) -> bool:
         return False
     if app_code and doc.app_code == app_code:
         version_map = cfg.APP_VERSION_MAP.get(app_code) or {}
-        effective_version = version_map.get(doc.functionality, version_map.get("*"))
-        if effective_version and doc.version and doc.version != effective_version:
-            return False
+        effective = version_map.get(doc.functionality, version_map.get("*"))
+        if effective and doc.version:
+            allowed = [effective] if isinstance(effective, str) else list(effective)
+            if doc.version not in allowed:
+                return False
     tags = filters.get("tags") or []
     if tags and doc.tags:
         doc_tags = set(doc.tags)
