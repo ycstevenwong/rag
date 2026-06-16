@@ -42,6 +42,7 @@ class IngestPipeline:
         app_code: str = "",
         version: str = "",
         functionality: str = "",
+        managed: bool = False,
     ) -> Iterator[dict]:
         """Yield progress events. Final event is {"type": "done", "result": {...}}."""
         sha = _sha256(file_path)
@@ -69,6 +70,7 @@ class IngestPipeline:
                 app_code=app_code,
                 version=version,
                 functionality=functionality,
+                managed=managed,
             ))
             self.vector_store.persist()
             yield {"type": "done", "result": {
@@ -134,6 +136,7 @@ class IngestPipeline:
             app_code=app_code,
             version=version,
             functionality=functionality,
+            managed=managed,
         ))
         self.bm25_store.rebuild(
             (c.id, c.text) for c in self.vector_store.chunks

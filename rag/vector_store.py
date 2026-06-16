@@ -52,6 +52,7 @@ class DocRecord:
     app_code: str = ""
     version: str = ""
     functionality: str = ""
+    managed: bool = False
 
 
 class FaissStore:

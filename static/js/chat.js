@@ -54,15 +54,21 @@
       const li = document.createElement("li");
       const typeBadge = d.source_type && d.source_type !== "other"
         ? `<span class="type-badge">${escapeHtml(d.source_type)}</span>` : "";
+      const control = d.managed
+        ? `<span class="locked" title="Managed by ingest script — delete on disk and re-run">🔒</span>`
+        : `<button data-id="${d.doc_id}" title="Delete">✕</button>`;
       li.innerHTML = `<span class="name" title="${escapeHtml(d.filename)}">${escapeHtml(d.filename)}</span>
                      ${typeBadge}
                      <span class="count">${d.n_chunks}</span>
-                     <button data-id="${d.doc_id}" title="Delete">✕</button>`;
-      li.querySelector("button").addEventListener("click", async () => {
-        if (!confirm(`Delete "${d.filename}"?`)) return;
-        await fetch(`/docs/${d.doc_id}`, { method: "DELETE" });
-        refreshDocs();
-      });
+                     ${control}`;
+      const delBtn = li.querySelector("button");
+      if (delBtn) {
+        delBtn.addEventListener("click", async () => {
+          if (!confirm(`Delete "${d.filename}"?`)) return;
+          await fetch(`/docs/${d.doc_id}`, { method: "DELETE" });
+          refreshDocs();
+        });
+      }
       docListEl.appendChild(li);
     }
   }

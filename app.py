@@ -110,6 +110,9 @@ def create_app() -> Flask:
 
     @app.delete("/docs/<doc_id>")
     def delete_doc(doc_id: str):
+        doc = next((d for d in vector_store.docs if d.doc_id == doc_id), None)
+        if doc and doc.managed:
+            return jsonify({"error": "Managed document; delete via ingest script."}), 403
         removed = ingest.delete(doc_id)
         return jsonify({"removed_chunks": removed})
 

@@ -59,6 +59,7 @@ h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
 }
 .doc-list button { background: transparent; color: var(--muted); border: none; cursor: pointer; padding: 2px 6px; }
 .doc-list button:hover { color: var(--danger); }
+.doc-list .locked { color: var(--muted); font-size: 13px; padding: 2px 6px; cursor: help; opacity: 0.7; }
 
 .meta-row { display: flex; gap: 6px; margin-bottom: 8px; }
 .meta-row select, .meta-row input[type="text"] {

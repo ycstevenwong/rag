@@ -228,6 +228,7 @@ def main() -> int:
                 app_code=app_code,
                 version=version,
                 functionality=functionality,
+                managed=True,
             ):
                 t = event["type"]
                 if t == "stage":
