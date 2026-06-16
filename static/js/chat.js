@@ -13,8 +13,10 @@
   const sourcesListEl = document.getElementById("sources-list");
   const rewrittenQueryEl = document.getElementById("rewritten-query");
   const uploadSourceTypeEl = document.getElementById("upload-source-type");
+  const uploadAppCodeEl = document.getElementById("upload-app-code");
   const uploadTagsEl = document.getElementById("upload-tags");
   const filterSourceTypeEl = document.getElementById("filter-source-type");
+  const filterAppCodeEl = document.getElementById("filter-app-code");
   const filterTagsEl = document.getElementById("filter-tags");
 
   let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
@@ -72,6 +74,7 @@
     const fd = new FormData();
     fd.append("file", file);
     fd.append("source_type", uploadSourceTypeEl.value || "other");
+    fd.append("app_code", uploadAppCodeEl.value || "");
     fd.append("tags", uploadTagsEl.value || "");
     uploadStatus.classList.remove("error");
     uploadStatus.textContent = `Uploading ${file.name}…`;
@@ -176,6 +179,7 @@
         .filter(Boolean);
       const filters = {};
       if (filterSourceTypeEl.value) filters.source_type = filterSourceTypeEl.value;
+      if (filterAppCodeEl.value) filters.app_code = filterAppCodeEl.value;
       if (filterTags.length) filters.tags = filterTags;
 
       const r = await fetch("/chat", {

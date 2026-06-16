@@ -108,6 +108,9 @@ def _doc_matches(doc: DocRecord, filters: dict) -> bool:
     st = filters.get("source_type")
     if st and doc.source_type != st:
         return False
+    app_code = filters.get("app_code")
+    if app_code and doc.app_code != app_code:
+        return False
     tags = filters.get("tags") or []
     if tags:
         doc_tags = set(doc.tags)

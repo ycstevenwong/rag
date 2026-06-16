@@ -34,6 +34,7 @@ class IngestPipeline:
         original_filename: str,
         source_type: str = "other",
         tags: list[str] | None = None,
+        app_code: str = "",
     ) -> Iterator[dict]:
         """Yield progress events. Final event is {"type": "done", "result": {...}}."""
         sha = _sha256(file_path)
@@ -90,6 +91,7 @@ class IngestPipeline:
             n_chunks=len(records),
             source_type=source_type,
             tags=list(tags or []),
+            app_code=app_code,
         ))
         self.bm25_store.rebuild(
             (c.id, c.text) for c in self.vector_store.chunks

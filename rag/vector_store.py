@@ -39,6 +39,7 @@ class DocRecord:
     n_chunks: int
     source_type: str = "other"
     tags: list[str] = field(default_factory=list)
+    app_code: str = ""
 
 
 class FaissStore:

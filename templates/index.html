@@ -16,12 +16,18 @@
       <form id="upload-form">
         <div class="meta-row">
           <select id="upload-source-type" title="Source type">
-            <option value="other">Other</option>
             <option value="manual">Manual</option>
-            <option value="policy">Policy</option>
-            <option value="faq">FAQ</option>
             <option value="spec">Spec</option>
+            <option value="other" selected>Other</option>
           </select>
+          <select id="upload-app-code" title="App code">
+            <option value="">No app code</option>
+            {% for code in app_codes %}
+            <option value="{{ code }}">{{ code }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="meta-row">
           <input id="upload-tags" type="text" placeholder="tags: comma,separated" />
         </div>
         <label class="file-drop" for="file-input">
@@ -41,11 +47,17 @@
         <select id="filter-source-type" title="Filter by source type">
           <option value="">Any type</option>
           <option value="manual">Manual</option>
-          <option value="policy">Policy</option>
-          <option value="faq">FAQ</option>
           <option value="spec">Spec</option>
           <option value="other">Other</option>
         </select>
+        <select id="filter-app-code" title="Filter by app code">
+          <option value="">Any app</option>
+          {% for code in app_codes %}
+          <option value="{{ code }}">{{ code }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="meta-row">
         <input id="filter-tags" type="text" placeholder="must-have tags" />
       </div>
       <small class="hint">Filters apply to every chat question until cleared.</small>

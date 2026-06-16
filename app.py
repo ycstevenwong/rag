@@ -40,7 +40,7 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index() -> str:
-        return render_template("index.html", model=cfg.LLM_MODEL)
+        return render_template("index.html", model=cfg.LLM_MODEL, app_codes=cfg.APP_CODES)
 
     @app.get("/docs")
     def list_docs():
@@ -63,6 +63,7 @@ def create_app() -> Flask:
         source_type = (request.form.get("source_type") or "other").strip().lower()
         raw_tags = request.form.get("tags") or ""
         tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        app_code = (request.form.get("app_code") or "").strip()
         f.save(dest)
 
         def event_stream():
@@ -72,6 +73,7 @@ def create_app() -> Flask:
                     original_filename=original,
                     source_type=source_type,
                     tags=tags,
+                    app_code=app_code,
                 ):
                     yield _sse(event)
             except Exception as exc:
@@ -117,11 +119,14 @@ def create_app() -> Flask:
         filters: dict | None = None
         if isinstance(raw_filters, dict):
             st = (raw_filters.get("source_type") or "").strip().lower()
+            ac = (raw_filters.get("app_code") or "").strip()
             tags = [t.strip() for t in (raw_filters.get("tags") or []) if isinstance(t, str) and t.strip()]
-            if st or tags:
+            if st or ac or tags:
                 filters = {}
                 if st:
                     filters["source_type"] = st
+                if ac:
+                    filters["app_code"] = ac
                 if tags:
                     filters["tags"] = tags
 

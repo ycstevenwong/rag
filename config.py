@@ -40,3 +40,10 @@ CONTEXT_TOKEN_BUDGET = int(os.getenv("CONTEXT_TOKEN_BUDGET", "3000"))
 
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
+
+# Edit this list to add or remove the app codes shown in the upload form
+# and filter sidebar. Empty string is always accepted as "unspecified".
+APP_CODES = [
+    # "app-a",
+    # "app-b",
+]

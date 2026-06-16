@@ -63,11 +63,17 @@ def main() -> int:
         default="",
         help="Comma-separated tags applied to every file (e.g. 'product-x,v3.2,en')",
     )
+    parser.add_argument(
+        "--app-code",
+        default="",
+        help="App code applied to every file (must match a value in config.APP_CODES if filtering by it)",
+    )
     args = parser.parse_args()
 
     target = Path(args.path).resolve()
     source_type = args.source_type.strip().lower()
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+    app_code = args.app_code.strip()
 
     if not target.exists():
         print(f"Path not found: {target}", file=sys.stderr)
@@ -107,6 +113,7 @@ def main() -> int:
                 original_filename=file_path.name,
                 source_type=source_type,
                 tags=tags,
+                app_code=app_code,
             ):
                 t = event["type"]
                 if t == "stage":
