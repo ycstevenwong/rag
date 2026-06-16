@@ -6,6 +6,7 @@
   const sessionIdEl = document.getElementById("session-id");
   const newSessionBtn = document.getElementById("new-session");
   const docListEl = document.getElementById("doc-list");
+  const managedSummaryEl = document.getElementById("managed-summary");
   const uploadForm = document.getElementById("upload-form");
   const fileInput = document.getElementById("file-input");
   const uploadStatus = document.getElementById("upload-status");
@@ -42,11 +43,20 @@
   // ---------- documents ----------
   async function refreshDocs() {
     const r = await fetch("/docs");
-    const docs = await r.json();
+    const payload = await r.json();
+    const docs = payload.items || [];
+    const managedCount = payload.managed_count || 0;
+    if (managedCount > 0) {
+      managedSummaryEl.hidden = false;
+      managedSummaryEl.textContent = `${managedCount.toLocaleString()} managed doc${managedCount === 1 ? "" : "s"} in index`;
+    } else {
+      managedSummaryEl.hidden = true;
+      managedSummaryEl.textContent = "";
+    }
     docListEl.innerHTML = "";
     if (!docs.length) {
       const li = document.createElement("li");
-      li.innerHTML = '<span class="name" style="color:var(--muted)">No documents yet</span>';
+      li.innerHTML = '<span class="name" style="color:var(--muted)">No user uploads</span>';
       docListEl.appendChild(li);
       return;
     }

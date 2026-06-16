@@ -49,8 +49,12 @@ def create_app() -> Flask:
 
     @app.get("/docs")
     def list_docs():
-        out = []
+        items = []
+        managed_count = 0
         for d in vector_store.docs:
+            if d.managed:
+                managed_count += 1
+                continue
             f = vector_store.get_file(d.file_id)
             entry = asdict(d)
             if f is not None:
@@ -61,8 +65,8 @@ def create_app() -> Flask:
                 entry["filename"] = "(missing file)"
                 entry["n_chunks"] = 0
                 entry["uploaded_at"] = 0.0
-            out.append(entry)
-        return jsonify(out)
+            items.append(entry)
+        return jsonify({"items": items, "managed_count": managed_count})
 
     @app.post("/upload")
     def upload():
