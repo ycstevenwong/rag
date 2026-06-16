@@ -59,15 +59,26 @@ def create_app() -> Flask:
 
         tmp_name = f"{uuid.uuid4().hex}{ext}"
         dest = cfg.UPLOAD_DIR / tmp_name
+        original = f.filename
         f.save(dest)
 
-        try:
-            result = ingest.ingest(dest, original_filename=f.filename)
-        except Exception as exc:
-            return jsonify({"error": str(exc)}), 500
-        finally:
-            dest.unlink(missing_ok=True)
-        return jsonify(result)
+        def event_stream():
+            try:
+                for event in ingest.ingest_stream(dest, original_filename=original):
+                    yield _sse(event)
+            except Exception as exc:
+                yield _sse({"type": "error", "error": str(exc)})
+            finally:
+                dest.unlink(missing_ok=True)
+
+        return Response(
+            stream_with_context(event_stream()),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @app.delete("/docs/<doc_id>")
     def delete_doc(doc_id: str):

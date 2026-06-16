@@ -59,7 +59,7 @@
   }
   refreshDocs();
 
-  fileInput.addEventListener("change", async () => {
+  fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
     if (!file) return;
     const fd = new FormData();
@@ -68,32 +68,75 @@
     uploadStatus.textContent = `Uploading ${file.name}…`;
     uploadProgress.hidden = false;
     uploadProgress.value = 0;
-    try {
-      const xhr = new XMLHttpRequest();
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) uploadProgress.value = (e.loaded / e.total) * 100;
-      });
-      const result = await new Promise((resolve, reject) => {
-        xhr.open("POST", "/upload");
-        xhr.onload = () => {
-          try { resolve({ status: xhr.status, body: JSON.parse(xhr.responseText) }); }
-          catch (e) { reject(e); }
-        };
-        xhr.onerror = () => reject(new Error("Network error"));
-        xhr.send(fd);
-      });
-      if (result.status >= 400) throw new Error(result.body.error || "Upload failed");
-      uploadStatus.textContent = result.body.duplicate
-        ? "Already indexed."
-        : `Indexed ${result.body.n_chunks} chunks.`;
-      uploadForm.reset();
-      refreshDocs();
-    } catch (err) {
-      uploadStatus.classList.add("error");
-      uploadStatus.textContent = err.message;
-    } finally {
+
+    const xhr = new XMLHttpRequest();
+    let parsedIdx = 0;
+    let buffer = "";
+    let finalResult = null;
+    let finalError = null;
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) uploadProgress.value = (e.loaded / e.total) * 100;
+    });
+    xhr.upload.addEventListener("load", () => {
+      uploadProgress.removeAttribute("value");
+      uploadStatus.textContent = "Indexing…";
+    });
+
+    xhr.addEventListener("progress", () => {
+      const newChunk = xhr.responseText.slice(parsedIdx);
+      parsedIdx = xhr.responseText.length;
+      buffer += newChunk;
+      let idx;
+      while ((idx = buffer.indexOf("\n\n")) >= 0) {
+        const raw = buffer.slice(0, idx).trim();
+        buffer = buffer.slice(idx + 2);
+        if (!raw.startsWith("data:")) continue;
+        const payload = raw.slice(5).trim();
+        if (!payload) continue;
+        let evt;
+        try { evt = JSON.parse(payload); } catch { continue; }
+        if (evt.type === "stage") {
+          uploadStatus.textContent = `${evt.stage}…`;
+          if (evt.stage === "Embedding") uploadProgress.value = 0;
+          else uploadProgress.removeAttribute("value");
+        } else if (evt.type === "progress") {
+          uploadProgress.value = (evt.done / evt.total) * 100;
+          uploadStatus.textContent = `Embedding batch ${evt.done}/${evt.total}…`;
+        } else if (evt.type === "done") {
+          finalResult = evt.result;
+        } else if (evt.type === "error") {
+          finalError = new Error(evt.error);
+        }
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      if (finalError) {
+        uploadStatus.classList.add("error");
+        uploadStatus.textContent = finalError.message;
+      } else if (finalResult) {
+        uploadStatus.textContent = finalResult.duplicate
+          ? "Already indexed."
+          : `Indexed ${finalResult.n_chunks} chunks.`;
+        uploadProgress.value = 100;
+        uploadForm.reset();
+        refreshDocs();
+      } else {
+        uploadStatus.classList.add("error");
+        uploadStatus.textContent = "Ingest ended without result.";
+      }
       setTimeout(() => { uploadProgress.hidden = true; }, 800);
-    }
+    });
+
+    xhr.addEventListener("error", () => {
+      uploadStatus.classList.add("error");
+      uploadStatus.textContent = "Network error";
+      setTimeout(() => { uploadProgress.hidden = true; }, 800);
+    });
+
+    xhr.open("POST", "/upload");
+    xhr.send(fd);
   });
 
   // ---------- chat ----------

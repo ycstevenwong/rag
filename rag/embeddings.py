@@ -1,7 +1,7 @@
 """Embedder that calls an OpenAI-compatible HTTP embeddings endpoint."""
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Iterator, Sequence
 
 import numpy as np
 import requests
@@ -43,6 +43,15 @@ class Embedder:
         for i in range(0, len(texts), batch_size):
             out.append(self._embed(texts[i : i + batch_size], input_type="passage"))
         return np.vstack(out) if out else np.zeros((0, self.dim), dtype=np.float32)
+
+    def encode_batched(
+        self, texts: Sequence[str], *, batch_size: int = 32
+    ) -> Iterator[tuple[int, int, np.ndarray]]:
+        """Yield (done_batches, total_batches, batch_vectors) per batch."""
+        total = (len(texts) + batch_size - 1) // batch_size
+        for i in range(0, len(texts), batch_size):
+            batch = self._embed(texts[i : i + batch_size], input_type="passage")
+            yield (i // batch_size + 1, total, batch)
 
     def encode_query(self, text: str) -> np.ndarray:
         return self._embed([text], input_type="query")[0]

@@ -5,6 +5,9 @@ import hashlib
 import time
 import uuid
 from pathlib import Path
+from typing import Iterator
+
+import numpy as np
 
 from . import config_facade as cfg
 from .bm25_store import BM25Store
@@ -25,16 +28,22 @@ class IngestPipeline:
         self.bm25_store = bm25_store
         self.embedder = embedder
 
-    def ingest(self, file_path: Path, original_filename: str) -> dict:
+    def ingest_stream(
+        self, file_path: Path, original_filename: str
+    ) -> Iterator[dict]:
+        """Yield progress events. Final event is {"type": "done", "result": {...}}."""
         sha = _sha256(file_path)
         existing = self.vector_store.has_sha256(sha)
         if existing:
-            return {"doc_id": existing, "n_chunks": 0, "duplicate": True}
+            yield {"type": "done", "result": {"doc_id": existing, "n_chunks": 0, "duplicate": True}}
+            return
 
+        yield {"type": "stage", "stage": "Parsing"}
         blocks = parse(file_path)
         if not blocks:
             raise ValueError("No extractable text in document.")
 
+        yield {"type": "stage", "stage": "Chunking"}
         chunks = chunk_blocks(
             blocks,
             target_tokens=cfg.CHUNK_TOKENS,
@@ -60,7 +69,14 @@ class IngestPipeline:
             records.append(rec)
             embed_texts.append(_text_for_embedding(c.text, rec_meta))
 
-        vectors = self.embedder.encode(embed_texts)
+        yield {"type": "stage", "stage": "Embedding"}
+        batches: list[np.ndarray] = []
+        for done, total, batch in self.embedder.encode_batched(embed_texts):
+            batches.append(batch)
+            yield {"type": "progress", "done": done, "total": total}
+        vectors = np.vstack(batches)
+
+        yield {"type": "stage", "stage": "Indexing"}
         self.vector_store.add(vectors, records)
         self.vector_store.add_doc(DocRecord(
             doc_id=doc_id,
@@ -69,13 +85,12 @@ class IngestPipeline:
             uploaded_at=time.time(),
             n_chunks=len(records),
         ))
-
         self.bm25_store.rebuild(
             (c.id, c.text) for c in self.vector_store.chunks
         )
         self.vector_store.persist()
         self.bm25_store.persist()
-        return {"doc_id": doc_id, "n_chunks": len(records), "duplicate": False}
+        yield {"type": "done", "result": {"doc_id": doc_id, "n_chunks": len(records), "duplicate": False}}
 
     def delete(self, doc_id: str) -> int:
         removed = self.vector_store.delete_doc(doc_id)
