@@ -1,9 +1,11 @@
 """Bulk-ingest a directory (or single file) of documents into the RAG index.
 
 Usage:
-    python scripts/ingest_corpus.py                  # uses data/corpus/
-    python scripts/ingest_corpus.py path/to/docs/    # custom directory
-    python scripts/ingest_corpus.py path/to/file.pdf # single file
+    python scripts/ingest_corpus.py                                 # uses data/corpus/
+    python scripts/ingest_corpus.py path/to/docs/                   # custom directory
+    python scripts/ingest_corpus.py path/to/file.pdf                # single file
+    python scripts/ingest_corpus.py docs/manuals/ \\
+        --source-type manual --tags product-x,v3.2,en               # with metadata
 
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
@@ -13,6 +15,7 @@ the last writer wins on persist.
 """
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -43,8 +46,28 @@ def collect_files(path: Path) -> list[Path]:
 
 
 def main() -> int:
-    arg = sys.argv[1] if len(sys.argv) > 1 else None
-    target = Path(arg).resolve() if arg else DEFAULT_CORPUS_DIR
+    parser = argparse.ArgumentParser(description="Bulk-ingest documents into the RAG index.")
+    parser.add_argument(
+        "path",
+        nargs="?",
+        default=str(DEFAULT_CORPUS_DIR),
+        help="File or directory of documents (default: data/corpus/)",
+    )
+    parser.add_argument(
+        "--source-type",
+        default="other",
+        help='Doc category applied to every file: manual | policy | faq | spec | other (default: "other")',
+    )
+    parser.add_argument(
+        "--tags",
+        default="",
+        help="Comma-separated tags applied to every file (e.g. 'product-x,v3.2,en')",
+    )
+    args = parser.parse_args()
+
+    target = Path(args.path).resolve()
+    source_type = args.source_type.strip().lower()
+    tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
     if not target.exists():
         print(f"Path not found: {target}", file=sys.stderr)
@@ -79,7 +102,12 @@ def main() -> int:
         )
         print(f"[{i}/{len(files)}] {label}")
         try:
-            for event in ingest.ingest_stream(file_path, original_filename=file_path.name):
+            for event in ingest.ingest_stream(
+                file_path,
+                original_filename=file_path.name,
+                source_type=source_type,
+                tags=tags,
+            ):
                 t = event["type"]
                 if t == "stage":
                     print(f"  {event['stage']}...")

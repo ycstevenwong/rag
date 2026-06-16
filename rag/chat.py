@@ -44,6 +44,7 @@ class ChatService:
         self,
         session_id: str,
         question: str,
+        filters: dict | None = None,
     ) -> Iterator[dict]:
         """Yield events: {"type": "sources", "sources": [...]} then
         {"type": "delta", "text": "..."} chunks, then {"type": "done"}.
@@ -60,6 +61,7 @@ class ChatService:
             k_vector=cfg.TOP_K_VECTOR,
             k_bm25=cfg.TOP_K_BM25,
             top_n=cfg.TOP_N_FINAL,
+            filters=filters,
         )
 
         context_text, sources = build_context_block(

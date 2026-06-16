@@ -37,6 +37,8 @@ class DocRecord:
     sha256: str
     uploaded_at: float
     n_chunks: int
+    source_type: str = "other"
+    tags: list[str] = field(default_factory=list)
 
 
 class FaissStore:
@@ -141,6 +143,12 @@ class FaissStore:
         for c in self.chunks:
             if c.id == chunk_id:
                 return c
+        return None
+
+    def get_doc(self, doc_id: str) -> DocRecord | None:
+        for d in self.docs:
+            if d.doc_id == doc_id:
+                return d
         return None
 
 

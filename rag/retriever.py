@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from .bm25_store import BM25Store
 from .embeddings import Embedder
-from .vector_store import ChunkRecord, FaissStore
+from .vector_store import ChunkRecord, DocRecord, FaissStore
 
 
 @dataclass
@@ -36,23 +36,42 @@ class HybridRetriever:
         k_bm25: int = 20,
         top_n: int = 6,
         rrf_k: int = 60,
+        filters: dict | None = None,
     ) -> list[RetrievedChunk]:
         if not self.vector_store.chunks:
             return []
 
+        fetch_mult = 3 if filters else 1
         with ThreadPoolExecutor(max_workers=2) as ex:
-            vec_future = ex.submit(self._vector_search, query, k_vector)
-            bm25_future = ex.submit(self.bm25_store.search, query, k_bm25)
+            vec_future = ex.submit(self._vector_search, query, k_vector * fetch_mult)
+            bm25_future = ex.submit(self.bm25_store.search, query, k_bm25 * fetch_mult)
             vec_results = vec_future.result()
             bm25_results = bm25_future.result()
 
+        def chunk_passes(chunk_id: int) -> bool:
+            if not filters:
+                return True
+            chunk = self.vector_store.get_chunk(chunk_id)
+            if chunk is None:
+                return False
+            doc = self.vector_store.get_doc(chunk.doc_id)
+            if doc is None:
+                return False
+            return _doc_matches(doc, filters)
+
         vec_ranks: dict[int, int] = {}
-        for rank, (chunk, _score) in enumerate(vec_results):
-            vec_ranks[chunk.id] = rank
+        for chunk, _score in vec_results:
+            if chunk_passes(chunk.id):
+                vec_ranks[chunk.id] = len(vec_ranks)
+                if len(vec_ranks) >= k_vector:
+                    break
 
         bm25_ranks: dict[int, int] = {}
-        for rank, (chunk_id, _score) in enumerate(bm25_results):
-            bm25_ranks[chunk_id] = rank
+        for chunk_id, _score in bm25_results:
+            if chunk_passes(chunk_id):
+                bm25_ranks[chunk_id] = len(bm25_ranks)
+                if len(bm25_ranks) >= k_bm25:
+                    break
 
         all_ids = set(vec_ranks) | set(bm25_ranks)
         fused: list[tuple[int, float]] = []
@@ -83,3 +102,16 @@ class HybridRetriever:
     def _vector_search(self, query: str, k: int) -> list[tuple[ChunkRecord, float]]:
         q_vec = self.embedder.encode_query(query)
         return self.vector_store.search(q_vec, k)
+
+
+def _doc_matches(doc: DocRecord, filters: dict) -> bool:
+    st = filters.get("source_type")
+    if st and doc.source_type != st:
+        return False
+    tags = filters.get("tags") or []
+    if tags:
+        doc_tags = set(doc.tags)
+        for t in tags:
+            if t not in doc_tags:
+                return False
+    return True

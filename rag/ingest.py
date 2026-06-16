@@ -29,7 +29,11 @@ class IngestPipeline:
         self.embedder = embedder
 
     def ingest_stream(
-        self, file_path: Path, original_filename: str
+        self,
+        file_path: Path,
+        original_filename: str,
+        source_type: str = "other",
+        tags: list[str] | None = None,
     ) -> Iterator[dict]:
         """Yield progress events. Final event is {"type": "done", "result": {...}}."""
         sha = _sha256(file_path)
@@ -84,6 +88,8 @@ class IngestPipeline:
             sha256=sha,
             uploaded_at=time.time(),
             n_chunks=len(records),
+            source_type=source_type,
+            tags=list(tags or []),
         ))
         self.bm25_store.rebuild(
             (c.id, c.text) for c in self.vector_store.chunks

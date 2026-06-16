@@ -12,6 +12,10 @@
   const uploadProgress = document.getElementById("upload-progress");
   const sourcesListEl = document.getElementById("sources-list");
   const rewrittenQueryEl = document.getElementById("rewritten-query");
+  const uploadSourceTypeEl = document.getElementById("upload-source-type");
+  const uploadTagsEl = document.getElementById("upload-tags");
+  const filterSourceTypeEl = document.getElementById("filter-source-type");
+  const filterTagsEl = document.getElementById("filter-tags");
 
   let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
   let currentSources = [];
@@ -46,7 +50,10 @@
     }
     for (const d of docs) {
       const li = document.createElement("li");
+      const typeBadge = d.source_type && d.source_type !== "other"
+        ? `<span class="type-badge">${escapeHtml(d.source_type)}</span>` : "";
       li.innerHTML = `<span class="name" title="${escapeHtml(d.filename)}">${escapeHtml(d.filename)}</span>
+                     ${typeBadge}
                      <span class="count">${d.n_chunks}</span>
                      <button data-id="${d.doc_id}" title="Delete">✕</button>`;
       li.querySelector("button").addEventListener("click", async () => {
@@ -64,6 +71,8 @@
     if (!file) return;
     const fd = new FormData();
     fd.append("file", file);
+    fd.append("source_type", uploadSourceTypeEl.value || "other");
+    fd.append("tags", uploadTagsEl.value || "");
     uploadStatus.classList.remove("error");
     uploadStatus.textContent = `Uploading ${file.name}…`;
     uploadProgress.hidden = false;
@@ -161,10 +170,18 @@
     let assembled = "";
 
     try {
+      const filterTags = (filterTagsEl.value || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
+      const filters = {};
+      if (filterSourceTypeEl.value) filters.source_type = filterSourceTypeEl.value;
+      if (filterTags.length) filters.tags = filterTags;
+
       const r = await fetch("/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: sessionId, message: text }),
+        body: JSON.stringify({ session_id: sessionId, message: text, filters }),
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const reader = r.body.getReader();

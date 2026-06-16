@@ -60,11 +60,19 @@ def create_app() -> Flask:
         tmp_name = f"{uuid.uuid4().hex}{ext}"
         dest = cfg.UPLOAD_DIR / tmp_name
         original = f.filename
+        source_type = (request.form.get("source_type") or "other").strip().lower()
+        raw_tags = request.form.get("tags") or ""
+        tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         f.save(dest)
 
         def event_stream():
             try:
-                for event in ingest.ingest_stream(dest, original_filename=original):
+                for event in ingest.ingest_stream(
+                    dest,
+                    original_filename=original,
+                    source_type=source_type,
+                    tags=tags,
+                ):
                     yield _sse(event)
             except Exception as exc:
                 yield _sse({"type": "error", "error": str(exc)})
@@ -105,9 +113,21 @@ def create_app() -> Flask:
         if not question:
             return jsonify({"error": "empty message"}), 400
 
+        raw_filters = payload.get("filters") or {}
+        filters: dict | None = None
+        if isinstance(raw_filters, dict):
+            st = (raw_filters.get("source_type") or "").strip().lower()
+            tags = [t.strip() for t in (raw_filters.get("tags") or []) if isinstance(t, str) and t.strip()]
+            if st or tags:
+                filters = {}
+                if st:
+                    filters["source_type"] = st
+                if tags:
+                    filters["tags"] = tags
+
         def event_stream():
             yield _sse({"type": "session", "session_id": session_id})
-            for event in chat_service.chat_stream(session_id, question):
+            for event in chat_service.chat_stream(session_id, question, filters=filters):
                 yield _sse(event)
 
         return Response(
