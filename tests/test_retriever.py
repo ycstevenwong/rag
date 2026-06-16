@@ -6,7 +6,7 @@ import pytest
 
 from rag.bm25_store import BM25Store
 from rag.retriever import HybridRetriever
-from rag.vector_store import ChunkRecord, FaissStore
+from rag.vector_store import ChunkRecord, DocRecord, FaissStore, FileRecord
 
 
 class StubEmbedder:
@@ -39,6 +39,7 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
         vectors_path=tmp_path / "v.faiss",
         chunks_path=tmp_path / "c.json",
         docs_path=tmp_path / "d.json",
+        files_path=tmp_path / "f.json",
     )
     bm25_store = BM25Store(tmp_path / "bm25.pkl")
     embedder = StubEmbedder()
@@ -49,12 +50,18 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
         "The error code XK-204 indicates an authentication timeout.",
         "Run unit tests with pytest -q.",
     ]
+    file_id = "test-file"
     records = [
-        ChunkRecord(id=i, doc_id="doc", filename="manual.pdf", text=t, token_count=10, meta={"pages": [i + 1]})
+        ChunkRecord(id=i, file_id=file_id, text=t, token_count=10, meta={"pages": [i + 1]})
         for i, t in enumerate(texts)
     ]
     vectors = embedder.encode(texts)
     vec_store.add(vectors, records)
+    vec_store.add_file(FileRecord(
+        file_id=file_id, sha256="x", filename="manual.pdf",
+        uploaded_at=0.0, n_chunks=len(records),
+    ))
+    vec_store.add_doc(DocRecord(doc_id="doc-1", file_id=file_id))
     bm25_store.rebuild((r.id, r.text) for r in records)
 
     retriever = HybridRetriever(vec_store, bm25_store, embedder)

@@ -1,4 +1,9 @@
-"""Ingest pipeline: parse → chunk → embed → persist."""
+"""Ingest pipeline: parse → chunk → embed → persist.
+
+A file is embedded at most once. Re-ingesting the same content with
+different metadata creates a new DocRecord pointing at the existing
+FileRecord — no re-parse, no re-embed.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -14,7 +19,7 @@ from .bm25_store import BM25Store
 from .chunker import chunk_blocks
 from .embeddings import Embedder
 from .parsers import parse
-from .vector_store import ChunkRecord, DocRecord, FaissStore
+from .vector_store import ChunkRecord, DocRecord, FaissStore, FileRecord
 
 
 class IngestPipeline:
@@ -40,9 +45,38 @@ class IngestPipeline:
     ) -> Iterator[dict]:
         """Yield progress events. Final event is {"type": "done", "result": {...}}."""
         sha = _sha256(file_path)
-        existing = self.vector_store.has_sha256(sha)
-        if existing:
-            yield {"type": "done", "result": {"doc_id": existing, "n_chunks": 0, "duplicate": True}}
+        existing_file = self.vector_store.find_file_by_sha(sha)
+
+        if existing_file is not None:
+            existing_doc_id = self.vector_store.find_doc_by_meta(
+                existing_file.file_id, source_type, app_code, version, functionality
+            )
+            if existing_doc_id:
+                yield {"type": "done", "result": {
+                    "doc_id": existing_doc_id,
+                    "n_chunks": 0,
+                    "duplicate": True,
+                }}
+                return
+
+            yield {"type": "stage", "stage": "Linking existing file"}
+            doc_id = uuid.uuid4().hex
+            self.vector_store.add_doc(DocRecord(
+                doc_id=doc_id,
+                file_id=existing_file.file_id,
+                source_type=source_type,
+                tags=list(tags or []),
+                app_code=app_code,
+                version=version,
+                functionality=functionality,
+            ))
+            self.vector_store.persist()
+            yield {"type": "done", "result": {
+                "doc_id": doc_id,
+                "n_chunks": existing_file.n_chunks,
+                "duplicate": False,
+                "linked": True,
+            }}
             return
 
         yield {"type": "stage", "stage": "Parsing"}
@@ -59,7 +93,7 @@ class IngestPipeline:
         if not chunks:
             raise ValueError("Chunking produced no chunks.")
 
-        doc_id = uuid.uuid4().hex
+        file_id = uuid.uuid4().hex
         next_id = self.vector_store.next_chunk_id()
         records: list[ChunkRecord] = []
         embed_texts: list[str] = []
@@ -67,8 +101,7 @@ class IngestPipeline:
             rec_meta = dict(c.meta)
             rec = ChunkRecord(
                 id=next_id + i,
-                doc_id=doc_id,
-                filename=original_filename,
+                file_id=file_id,
                 text=c.text,
                 token_count=c.token_count,
                 meta=rec_meta,
@@ -85,12 +118,17 @@ class IngestPipeline:
 
         yield {"type": "stage", "stage": "Indexing"}
         self.vector_store.add(vectors, records)
-        self.vector_store.add_doc(DocRecord(
-            doc_id=doc_id,
-            filename=original_filename,
+        self.vector_store.add_file(FileRecord(
+            file_id=file_id,
             sha256=sha,
+            filename=original_filename,
             uploaded_at=time.time(),
             n_chunks=len(records),
+        ))
+        doc_id = uuid.uuid4().hex
+        self.vector_store.add_doc(DocRecord(
+            doc_id=doc_id,
+            file_id=file_id,
             source_type=source_type,
             tags=list(tags or []),
             app_code=app_code,
@@ -102,7 +140,11 @@ class IngestPipeline:
         )
         self.vector_store.persist()
         self.bm25_store.persist()
-        yield {"type": "done", "result": {"doc_id": doc_id, "n_chunks": len(records), "duplicate": False}}
+        yield {"type": "done", "result": {
+            "doc_id": doc_id,
+            "n_chunks": len(records),
+            "duplicate": False,
+        }}
 
     def delete(self, doc_id: str) -> int:
         removed = self.vector_store.delete_doc(doc_id)
@@ -110,8 +152,8 @@ class IngestPipeline:
             self.bm25_store.rebuild(
                 (c.id, c.text) for c in self.vector_store.chunks
             )
-            self.vector_store.persist()
             self.bm25_store.persist()
+        self.vector_store.persist()
         return removed
 
 

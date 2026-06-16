@@ -16,6 +16,8 @@ class RetrievedChunk:
     score: float
     vector_rank: int | None
     bm25_rank: int | None
+    filename: str = ""
+    doc: DocRecord | None = None
 
 
 class HybridRetriever:
@@ -49,16 +51,25 @@ class HybridRetriever:
             vec_results = vec_future.result()
             bm25_results = bm25_future.result()
 
+        # For each surviving chunk, remember which DocRecord we matched
+        # against — used for citation metadata downstream.
+        matching_doc: dict[int, DocRecord] = {}
+
         def chunk_passes(chunk_id: int) -> bool:
-            if not filters:
-                return True
             chunk = self.vector_store.get_chunk(chunk_id)
             if chunk is None:
                 return False
-            doc = self.vector_store.get_doc(chunk.doc_id)
-            if doc is None:
+            docs = self.vector_store.docs_for_file(chunk.file_id)
+            if not docs:
                 return False
-            return _doc_matches(doc, filters)
+            if not filters:
+                matching_doc[chunk_id] = docs[0]
+                return True
+            for d in docs:
+                if _doc_matches(d, filters):
+                    matching_doc[chunk_id] = d
+                    return True
+            return False
 
         vec_ranks: dict[int, int] = {}
         for chunk, _score in vec_results:
@@ -92,11 +103,15 @@ class HybridRetriever:
             chunk = self.vector_store.get_chunk(cid)
             if chunk is None:
                 continue
+            file = self.vector_store.get_file(chunk.file_id)
+            filename = file.filename if file else ""
             out.append(RetrievedChunk(
                 chunk=chunk,
                 score=score,
                 vector_rank=vec_ranks.get(cid),
                 bm25_rank=bm25_ranks.get(cid),
+                filename=filename,
+                doc=matching_doc.get(cid),
             ))
         return out
 

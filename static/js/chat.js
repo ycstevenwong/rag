@@ -130,7 +130,9 @@
       } else if (finalResult) {
         uploadStatus.textContent = finalResult.duplicate
           ? "Already indexed."
-          : `Indexed ${finalResult.n_chunks} chunks.`;
+          : finalResult.linked
+            ? `Linked to existing content (${finalResult.n_chunks} chunks).`
+            : `Indexed ${finalResult.n_chunks} chunks.`;
         uploadProgress.value = 100;
         uploadForm.reset();
         refreshDocs();

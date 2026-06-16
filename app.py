@@ -32,6 +32,7 @@ def create_app() -> Flask:
         vectors_path=cfg.VECTORS_PATH,
         chunks_path=cfg.CHUNKS_PATH,
         docs_path=cfg.DOCS_PATH,
+        files_path=cfg.FILES_PATH,
     )
     bm25_store = BM25Store(cfg.BM25_PATH)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
@@ -48,7 +49,20 @@ def create_app() -> Flask:
 
     @app.get("/docs")
     def list_docs():
-        return jsonify([asdict(d) for d in vector_store.docs])
+        out = []
+        for d in vector_store.docs:
+            f = vector_store.get_file(d.file_id)
+            entry = asdict(d)
+            if f is not None:
+                entry["filename"] = f.filename
+                entry["n_chunks"] = f.n_chunks
+                entry["uploaded_at"] = f.uploaded_at
+            else:
+                entry["filename"] = "(missing file)"
+                entry["n_chunks"] = 0
+                entry["uploaded_at"] = 0.0
+            out.append(entry)
+        return jsonify(out)
 
     @app.post("/upload")
     def upload():
