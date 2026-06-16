@@ -7,15 +7,25 @@ Usage:
     python scripts/ingest_corpus.py docs/manuals/ \\
         --source-type manual --tags product-x,v3.2,en               # explicit metadata
     python scripts/ingest_corpus.py data/corpus/ --by-path          # infer from folders
+    python scripts/ingest_corpus.py data/corpus/manual --by-filename # infer from filename
 
 With --by-path, each file's source_type, app_code, version, and
-functionality are derived from its location under the target directory
-using the convention:
+functionality are derived from its folder layout:
 
     <target>/<source_type>/<app_code>/<version>/<functionality>/file.ext
 
-Files shallower than that fall back to --source-type / --app-code /
---version / --functionality (each level is independently optional).
+With --by-filename, each file's functionality and version are parsed
+from the filename, and source_type defaults to "manual":
+
+    <target>/.../<functionality>_<version>_<anything>.ext
+
+The third+ underscore-separated segments are markers and ignored. App_code
+is left empty - query-time filtering on app_code uses APP_VERSION_MAP to
+decide which (functionality, version) combos belong to that app, so the
+manual itself doesn't need to be stamped with an app_code.
+
+Files that don't match the convention fall back to --source-type /
+--app-code / --version / --functionality.
 
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
@@ -26,6 +36,7 @@ the last writer wins on persist.
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -43,6 +54,7 @@ from rag.vector_store import FaissStore
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
 DEFAULT_CORPUS_DIR = ROOT / "data" / "corpus"
 KNOWN_SOURCE_TYPES = {"manual", "spec", "other"}
+VERSION_RE = re.compile(r"^v\d+$", re.IGNORECASE)
 
 
 def collect_files(path: Path) -> list[Path]:
@@ -73,6 +85,21 @@ def infer_from_path(
     return (source_type, app_code, version, functionality)
 
 
+def infer_from_filename(file_path: Path) -> tuple[str | None, str | None]:
+    """Parse '<functionality>_<version>_<anything>.ext' from the filename
+    (excluding extension). Return (functionality, version). Third and later
+    segments are markers and ignored. version must look like 'v\\d+' or it's
+    treated as missing."""
+    parts = file_path.stem.split("_")
+    if not parts or not parts[0]:
+        return (None, None)
+    functionality = parts[0].strip()
+    version = None
+    if len(parts) >= 2 and VERSION_RE.match(parts[1].strip()):
+        version = parts[1].strip().lower()
+    return (functionality, version)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bulk-ingest documents into the RAG index.")
     parser.add_argument(
@@ -83,8 +110,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--source-type",
-        default="other",
-        help='Doc category applied to every file: manual | policy | faq | spec | other (default: "other")',
+        default=None,
+        help='Doc category applied to every file: manual | spec | other (default: "manual" with --by-filename, else "other")',
     )
     parser.add_argument(
         "--tags",
@@ -106,15 +133,24 @@ def main() -> int:
         default="",
         help="Functionality applied to every file (e.g. 'login', 'token'). Used with APP_VERSION_MAP at query time.",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--by-path",
         action="store_true",
         help="Infer all four fields per file from <target>/<source_type>/<app_code>/<version>/<functionality>/...",
     )
+    mode.add_argument(
+        "--by-filename",
+        action="store_true",
+        help="Parse functionality and version from '<func>_<ver>_<anything>.ext'. source_type defaults to 'manual'. app_code stays empty.",
+    )
     args = parser.parse_args()
 
     target = Path(args.path).resolve()
-    default_source_type = args.source_type.strip().lower()
+    if args.source_type is not None:
+        default_source_type = args.source_type.strip().lower()
+    else:
+        default_source_type = "manual" if args.by_filename else "other"
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     default_app_code = args.app_code.strip()
     default_version = args.version.strip()
@@ -140,6 +176,7 @@ def main() -> int:
         vectors_path=cfg.VECTORS_PATH,
         chunks_path=cfg.CHUNKS_PATH,
         docs_path=cfg.DOCS_PATH,
+        files_path=cfg.FILES_PATH,
     )
     bm25_store = BM25Store(cfg.BM25_PATH)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
@@ -171,6 +208,15 @@ def main() -> int:
                 version = inf_ver
             if inf_fn:
                 functionality = inf_fn
+            print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
+        elif args.by_filename:
+            inf_fn, inf_ver = infer_from_filename(file_path)
+            if inf_fn:
+                functionality = inf_fn
+            if inf_ver:
+                version = inf_ver
+            else:
+                print(f"  WARNING: no '_v<N>_' segment in filename {file_path.name!r}; version stays {version or '-'}")
             print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
 
         try:

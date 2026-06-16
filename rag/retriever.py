@@ -130,7 +130,7 @@ def _doc_matches(doc: DocRecord, filters: dict) -> bool:
     app_code = filters.get("app_code")
     if app_code and doc.app_code and doc.app_code != app_code:
         return False
-    if app_code and doc.app_code == app_code:
+    if app_code:
         version_map = cfg.APP_VERSION_MAP.get(app_code) or {}
         effective = version_map.get(doc.functionality, version_map.get("*"))
         if effective and doc.version:
