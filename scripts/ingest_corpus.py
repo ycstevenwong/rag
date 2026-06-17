@@ -7,7 +7,8 @@ Usage:
     python scripts/ingest_corpus.py docs/manuals/ \\
         --source-type manual --tags product-x,v3.2,en               # explicit metadata
     python scripts/ingest_corpus.py data/corpus/ --by-path          # infer from folders
-    python scripts/ingest_corpus.py data/corpus/manual --by-filename # infer from filename
+    python scripts/ingest_corpus.py data/corpus/manual --by-filename # manuals: filename
+    python scripts/ingest_corpus.py data/corpus/spec --by-app-path  # specs: app-code folders
 
 With --by-path, each file's source_type, app_code, version, and
 functionality are derived from its folder layout:
@@ -23,6 +24,15 @@ The third+ underscore-separated segments are markers and ignored. App_code
 is left empty - query-time filtering on app_code uses APP_VERSION_MAP to
 decide which (functionality, version) combos belong to that app, so the
 manual itself doesn't need to be stamped with an app_code.
+
+With --by-app-path, each file's app_code (and optionally version) come
+from the folder layout, and source_type defaults to "spec":
+
+    <target>/<app_code>/<file.ext>
+    <target>/<app_code>/<version>/<file.ext>
+
+Use this for app-owned docs (specs, policies) where each file belongs
+to exactly one app_code and isn't covered by APP_VERSION_MAP.
 
 Files that don't match the convention fall back to --source-type /
 --app-code / --version / --functionality.
@@ -100,6 +110,22 @@ def infer_from_filename(file_path: Path) -> tuple[str | None, str | None]:
     return (functionality, version)
 
 
+def infer_from_app_path(
+    file_path: Path, root: Path
+) -> tuple[str | None, str | None]:
+    """Return (app_code, version) from <root>/<app_code>/[<version>/]/.../file."""
+    try:
+        rel = file_path.relative_to(root)
+    except ValueError:
+        return (None, None)
+    parts = rel.parts
+    app_code = parts[0].strip() if len(parts) >= 2 else None
+    version = None
+    if len(parts) >= 3 and VERSION_RE.match(parts[1].strip()):
+        version = parts[1].strip().lower()
+    return (app_code, version)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bulk-ingest documents into the RAG index.")
     parser.add_argument(
@@ -144,13 +170,22 @@ def main() -> int:
         action="store_true",
         help="Parse functionality and version from '<func>_<ver>_<anything>.ext'. source_type defaults to 'manual'. app_code stays empty.",
     )
+    mode.add_argument(
+        "--by-app-path",
+        action="store_true",
+        help="Read app_code (and optional version) from <target>/<app_code>/[<version>/]/.... source_type defaults to 'spec'.",
+    )
     args = parser.parse_args()
 
     target = Path(args.path).resolve()
     if args.source_type is not None:
         default_source_type = args.source_type.strip().lower()
+    elif args.by_filename:
+        default_source_type = "manual"
+    elif args.by_app_path:
+        default_source_type = "spec"
     else:
-        default_source_type = "manual" if args.by_filename else "other"
+        default_source_type = "other"
     tags = [t.strip() for t in args.tags.split(",") if t.strip()]
     default_app_code = args.app_code.strip()
     default_version = args.version.strip()
@@ -217,6 +252,15 @@ def main() -> int:
                 version = inf_ver
             else:
                 print(f"  WARNING: no '_v<N>_' segment in filename {file_path.name!r}; version stays {version or '-'}")
+            print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
+        elif args.by_app_path and target.is_dir():
+            inf_ac, inf_ver = infer_from_app_path(file_path, target)
+            if inf_ac:
+                app_code = inf_ac
+                if cfg.APP_CODES and app_code not in cfg.APP_CODES:
+                    print(f"  WARNING: inferred app_code {app_code!r} not in config.APP_CODES")
+            if inf_ver:
+                version = inf_ver
             print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
 
         try:
