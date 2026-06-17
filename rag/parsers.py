@@ -46,15 +46,18 @@ def parse_text(path: Path) -> list[Block]:
 
 
 def parse_pdf(path: Path) -> list[Block]:
-    from pypdf import PdfReader
+    import fitz  # PyMuPDF
 
-    reader = PdfReader(str(path))
     pages_text: list[str] = []
-    for page in reader.pages:
-        try:
-            pages_text.append(page.extract_text() or "")
-        except Exception:
-            pages_text.append("")
+    doc = fitz.open(str(path))
+    try:
+        for page in doc:
+            try:
+                pages_text.append(page.get_text("text") or "")
+            except Exception:
+                pages_text.append("")
+    finally:
+        doc.close()
 
     pages_text = _strip_repeating_lines(pages_text, min_frac=0.5)
 
