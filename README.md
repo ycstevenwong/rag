@@ -126,46 +126,154 @@ boilerplate.
 ## Bulk ingest script
 
 `scripts/ingest_corpus.py` is the canonical path for adding curated content
-(manuals, specs). Three modes:
+(manuals, specs). It walks a directory tree, parses each supported file
+(`.pdf .docx .pptx .xlsx .txt .md`), and pushes the chunks through the same
+pipeline the UI uploader uses — but with full metadata derived from the folder
+or filename convention, and the `managed=True` flag so the docs are locked
+from UI deletion.
 
-| Mode | Folder shape | Default `source_type` |
-|---|---|---|
-| `--by-filename` | flat: `<func>_<ver>_<anything>.ext` | `manual` |
-| `--by-app-path` | `<app_code>/[<v?>/]/file.ext` | `spec` |
-| `--by-path` | `<src_type>/<app_code>/<ver>/<func>/file.ext` | inferred from level 0 |
+### Three layout modes (mutually exclusive)
 
-Typical layout:
+| Mode | Folder shape | Default `source_type` | Use for |
+|---|---|---|---|
+| `--by-filename` | flat: `<func>_<ver>_<anything>.ext` | `manual` | manuals (version-policy driven) |
+| `--by-app-path` | `<app_code>/[<v>/]/file.ext` | `spec` | app-owned docs (specs, policies) |
+| `--by-path` | `<src_type>/<app_code>/<ver>/<func>/file.ext` | inferred from level 0 | fully-explicit, general purpose |
+
+### Typical layout
 
 ```
 data/corpus/
 ├── manual/                              ← --by-filename
 │   ├── ca_v1_functional.pdf
+│   ├── ca_v2_functional.pdf
 │   ├── login_v2_functional.pdf
+│   ├── mfa_v2_functional.pdf
 │   └── token_v1_functional.pdf
 └── spec/                                ← --by-app-path
     ├── auth-svc/
     │   ├── api-spec.pdf
     │   └── data-model.pdf
     └── billing-svc/
-        └── payment-spec.pdf
+        ├── payment-spec.pdf
+        └── refund-spec.pdf
 ```
 
-Run (with Flask stopped — the store isn't multi-writer-safe):
+### CLI
+
+```
+python scripts/ingest_corpus.py [path] [mode-flag] [overrides...]
+```
+
+Positional:
+- `path` — file or directory. Defaults to `data/corpus/`.
+
+Mode (pick one):
+- `--by-filename` — manuals convention; parse `<func>_<ver>_*.ext`. `<ver>` must
+  match `v\d+`; trailing segments are ignored.
+- `--by-app-path` — specs convention; level 0 under target = `app_code`,
+  optional level 1 (matching `v\d+`) = `version`.
+- `--by-path` — fully explicit; each level of `<src_type>/<app_code>/<ver>/<func>/`
+  becomes the corresponding field.
+
+Per-file overrides (apply when no path/filename info covers the field):
+- `--source-type <s>` — `manual | spec | other` (mode-dependent default).
+- `--app-code <code>` — must match a value in `config.APP_CODES` to be
+  useful for filtering; warns otherwise.
+- `--version <v>` — e.g. `v1`, `v2`.
+- `--functionality <f>` — e.g. `login`, `mfa`.
+- `--tags <a,b,c>` — comma-separated, applied to every file in the run.
+
+### Run (Flask must be stopped — the store isn't multi-writer-safe)
 
 ```bash
+# Wipe first if you want to re-index from scratch
+rm -rf data/index/*
+
+# Manuals
 python scripts/ingest_corpus.py data/corpus/manual --by-filename
+
+# Specs
 python scripts/ingest_corpus.py data/corpus/spec --by-app-path
 ```
 
-Bulk-ingested docs are marked `managed=True`. They:
+Single file with explicit metadata:
 
-- Don't appear in the sidebar doc list (a summary `1,247 managed docs in index`
-  is shown instead).
-- Can't be deleted from the UI (the `/docs/<id>` endpoint returns 403 for
-  managed docs, defense-in-depth beyond the UI affordance).
+```bash
+python scripts/ingest_corpus.py path/to/file.pdf \
+    --source-type manual --app-code auth-svc \
+    --version v2 --functionality login
+```
 
-To replace a managed doc: edit the source file, wipe `data/index/*`, re-run the
-script. SHA dedup makes re-runs cheap (already-indexed files are skipped).
+### Expected output
+
+```
+Ingesting 5 document(s) from /Users/.../data/corpus/manual
+
+[1/5] ca_v1_functional.pdf
+  source_type=manual app_code=- version=v1 functionality=ca
+  Parsing...
+  Chunking...
+  Embedding batch 4/4
+  Indexed 27 chunks
+[2/5] ca_v2_functional.pdf
+  source_type=manual app_code=- version=v2 functionality=ca
+  ...
+
+Done. Added: 5  Duplicate: 0  Errors: 0
+Total docs in index: 5
+```
+
+Warnings (don't abort the run) appear when inferred values fall outside the
+known sets:
+
+```
+[3/5] manaul/auth-svc/v2/api.pdf
+  WARNING: inferred source_type 'manaul' not in ['manual', 'other', 'spec']
+[4/5] auth-svc/api.pdf
+  WARNING: inferred app_code 'auth-svc' not in config.APP_CODES
+```
+
+Exit codes:
+- `0` — every file succeeded (or was an idempotent skip).
+- `1` — bad path, empty target.
+- `2` — at least one file errored, others may have succeeded.
+
+### Idempotency and re-ingest
+
+Files are deduplicated by SHA-256. Re-running the same command:
+
+- New files → ingested fresh.
+- Same file + same metadata combo → reported as `Already indexed -> skipped`.
+- Same file content + new metadata combo (e.g. shared with a second app_code
+  via a different folder) → no re-parse / re-embed; just a new `DocRecord`
+  pointing at the existing chunks. Output shows `Linking existing file...`.
+
+### Managed flag
+
+Every doc produced by the script has `managed=True`. They:
+
+- **Don't appear in the sidebar doc list** — a summary
+  `1,247 managed docs in index` shows above the user's own uploads.
+- **Can't be deleted from the UI** — the `/docs/<id>` endpoint returns 403 for
+  managed docs (defense in depth beyond just hiding the button).
+
+To replace a managed doc: edit the source file on disk, wipe `data/index/*`,
+re-run the script. Or to remove one without rebuilding, delete its source file
+and re-run — the missing file simply isn't re-ingested.
+
+### Bringing the changes online
+
+```bash
+python app.py
+# open http://127.0.0.1:5000
+```
+
+In the sidebar **Filter retrieval**:
+- `App code = auth-svc` + a manual question → `APP_VERSION_MAP` picks the
+  correct version per functionality.
+- `App code = auth-svc` + `Source type = Spec` → only auth-svc's specs.
+- Leave filters blank → all corpus content is fair game.
 
 ## UI uploads vs bulk ingest
 
