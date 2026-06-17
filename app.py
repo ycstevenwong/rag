@@ -82,7 +82,9 @@ def create_app() -> Flask:
         tmp_name = f"{uuid.uuid4().hex}{ext}"
         dest = cfg.UPLOAD_DIR / tmp_name
         original = f.filename
-        source_type = (request.form.get("source_type") or "other").strip().lower()
+        # UI uploads are always scratch / "other" — manuals and specs are
+        # script-managed. Ignore any client-supplied source_type.
+        source_type = "other"
         raw_tags = request.form.get("tags") or ""
         tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         app_code = (request.form.get("app_code") or "").strip()

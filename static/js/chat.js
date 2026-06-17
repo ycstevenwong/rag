@@ -13,7 +13,6 @@
   const uploadProgress = document.getElementById("upload-progress");
   const sourcesListEl = document.getElementById("sources-list");
   const rewrittenQueryEl = document.getElementById("rewritten-query");
-  const uploadSourceTypeEl = document.getElementById("upload-source-type");
   const uploadAppCodeEl = document.getElementById("upload-app-code");
   const uploadTagsEl = document.getElementById("upload-tags");
   const filterSourceTypeEl = document.getElementById("filter-source-type");
@@ -89,7 +88,6 @@
     if (!file) return;
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("source_type", uploadSourceTypeEl.value || "other");
     fd.append("app_code", uploadAppCodeEl.value || "");
     fd.append("tags", uploadTagsEl.value || "");
     uploadStatus.classList.remove("error");
