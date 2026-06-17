@@ -71,44 +71,67 @@ def parse_pdf(path: Path) -> list[Block]:
 def parse_docx(path: Path) -> list[Block]:
     from docx import Document
 
+    from . import config_facade as cfg
+
     doc = Document(str(path))
     blocks: list[Block] = []
     heading_stack: list[str] = []  # [h1, h2, h3, ...]
+    stop_keywords = [k.lower() for k in cfg.DOCX_STOP_HEADINGS if k.strip()]
 
-    for para in doc.paragraphs:
-        text = (para.text or "").strip()
-        if not text:
-            continue
-        style = (para.style.name or "").lower() if para.style else ""
-        if style.startswith("heading"):
-            try:
-                level = int(style.split()[-1])
-            except ValueError:
-                level = 1
-            heading_stack = heading_stack[: max(0, level - 1)]
-            heading_stack.append(text)
-            blocks.append(Block(
-                text=text,
-                kind="heading",
-                meta={"heading_path": " > ".join(heading_stack), "level": level},
-            ))
-        else:
-            blocks.append(Block(
-                text=text,
-                kind="paragraph",
-                meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
-            ))
+    para_map = {p._element: p for p in doc.paragraphs}
+    table_map = {t._element: t for t in doc.tables}
 
-    for table in doc.tables:
-        for row in table.rows:
-            cells = [c.text.strip() for c in row.cells]
-            row_text = " | ".join(c for c in cells if c)
-            if row_text:
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.split("}", 1)[-1]
+
+        if tag == "p":
+            para = para_map.get(child)
+            if para is None:
+                continue
+            text = (para.text or "").strip()
+            if not text:
+                continue
+            style = (para.style.name or "").lower() if para.style else ""
+            is_heading = style.startswith("heading")
+
+            if is_heading and stop_keywords:
+                heading_lower = text.lower()
+                if any(kw in heading_lower for kw in stop_keywords):
+                    break  # drop the matching heading and everything after
+
+            if is_heading:
+                try:
+                    level = int(style.split()[-1])
+                except ValueError:
+                    level = 1
+                heading_stack = heading_stack[: max(0, level - 1)]
+                heading_stack.append(text)
                 blocks.append(Block(
-                    text=row_text,
-                    kind="table_row",
+                    text=text,
+                    kind="heading",
+                    meta={"heading_path": " > ".join(heading_stack), "level": level},
+                ))
+            else:
+                blocks.append(Block(
+                    text=text,
+                    kind="paragraph",
                     meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
                 ))
+
+        elif tag == "tbl":
+            table = table_map.get(child)
+            if table is None:
+                continue
+            for row in table.rows:
+                cells = [c.text.strip() for c in row.cells]
+                row_text = " | ".join(c for c in cells if c)
+                if row_text:
+                    blocks.append(Block(
+                        text=row_text,
+                        kind="table_row",
+                        meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
+                    ))
+
     return blocks
 
 

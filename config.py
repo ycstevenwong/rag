@@ -59,6 +59,17 @@ APP_CODES = [
 # explicitly listed. When the user picks an app_code at query time,
 # the retriever auto-filters manual chunks to the right version per
 # functionality using this map.
+# Stop ingesting DOCX content after any heading whose text contains one of
+# these keywords (case-insensitive substring match on heading-styled
+# paragraphs). The matching heading itself is also dropped. Empty list =
+# no filtering.
+DOCX_STOP_HEADINGS: list[str] = [
+    # "Appendix",
+    # "References",
+    # "Index",
+    # "Revision History",
+]
+
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
     # "auth-svc": {
     #     "login": "v2",
