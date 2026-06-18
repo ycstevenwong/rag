@@ -242,7 +242,9 @@
       await fetch("/admin/logout", { method: "POST" });
       isAdmin = false;
       setAdminButton(true, false);
+      docsModalEl.hidden = true;
       refreshDocs();
+      refreshPending();
       return;
     }
     openLoginModal();
