@@ -292,17 +292,28 @@
     const payload = await r.json();
     const docs = payload.items || [];
     const managedCount = payload.managed_count || 0;
-    if (managedCount > 0) {
+    const totalCount = managedCount + docs.length;
+    if (totalCount > 0) {
       managedSummaryEl.hidden = false;
-      managedSummaryEl.textContent = `${managedCount.toLocaleString()} managed doc${managedCount === 1 ? "" : "s"} in index`;
+      managedSummaryEl.textContent = isAdmin
+        ? `${managedCount.toLocaleString()} managed doc${managedCount === 1 ? "" : "s"} in index`
+        : `${totalCount.toLocaleString()} document${totalCount === 1 ? "" : "s"} indexed`;
     } else {
       managedSummaryEl.hidden = true;
       managedSummaryEl.textContent = "";
     }
+
+    if (!isAdmin) {
+      // Anonymous users get the count only — no doc list (they can't act on it).
+      docListEl.innerHTML = "";
+      docListEl.hidden = true;
+      return;
+    }
+    docListEl.hidden = false;
     docListEl.innerHTML = "";
     if (!docs.length) {
       const li = document.createElement("li");
-      li.innerHTML = '<span class="name" style="color:var(--muted)">No user uploads</span>';
+      li.innerHTML = '<span class="name" style="color:var(--muted)">No documents</span>';
       docListEl.appendChild(li);
       return;
     }
@@ -333,17 +344,31 @@
   fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
     if (!file) return;
-    const fd = new FormData();
-    fd.append("file", file);
-    fd.append("app_code", uploadAppCodeEl.value || "");
-    fd.append("tags", uploadTagsEl.value || "");
-    fd.append("source_type", uploadSourceTypeEl.value || "other");
-    fd.append("version", uploadVersionEl.value || "");
-    fd.append("functionality", uploadFunctionalityEl.value || "");
-    if (!isAdmin) {
-      fd.append("requester", uploadRequesterEl.value || "");
+
+    const missing = [];
+    if (!uploadSourceTypeEl.value) missing.push("source type");
+    if (!uploadAppCodeEl.value) missing.push("app code");
+    if (!uploadVersionEl.value.trim()) missing.push("version");
+    if (!uploadFunctionalityEl.value.trim()) missing.push("functionality");
+    if (!isAdmin && !uploadRequesterEl.value.trim()) missing.push("your name");
+    if (missing.length) {
+      uploadStatus.classList.add("error");
+      uploadStatus.textContent = `Please fill in: ${missing.join(", ")}.`;
+      fileInput.value = "";
+      return;
     }
     uploadStatus.classList.remove("error");
+
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("app_code", uploadAppCodeEl.value);
+    fd.append("tags", uploadTagsEl.value || "");
+    fd.append("source_type", uploadSourceTypeEl.value);
+    fd.append("version", uploadVersionEl.value.trim());
+    fd.append("functionality", uploadFunctionalityEl.value.trim());
+    if (!isAdmin) {
+      fd.append("requester", uploadRequesterEl.value.trim());
+    }
     uploadStatus.textContent = `Uploading ${file.name}…`;
     uploadProgress.hidden = false;
     uploadProgress.value = 0;

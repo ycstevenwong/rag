@@ -30,27 +30,28 @@
       <h2>Documents</h2>
       <form id="upload-form">
         <div class="meta-row">
-          <select id="upload-source-type" title="Source type">
-            <option value="other" selected>Other</option>
+          <select id="upload-source-type" title="Source type" required>
+            <option value="" disabled selected>Source type *</option>
+            <option value="other">Other</option>
             <option value="manual">Manual</option>
             <option value="spec">Spec</option>
           </select>
-          <select id="upload-app-code" title="App code">
-            <option value="">No app code</option>
+          <select id="upload-app-code" title="App code" required>
+            <option value="" disabled selected>App code *</option>
             {% for code in app_codes %}
             <option value="{{ code }}">{{ code }}</option>
             {% endfor %}
           </select>
         </div>
         <div class="meta-row">
-          <input id="upload-version" type="text" placeholder="version (e.g. v1)" />
-          <input id="upload-functionality" type="text" placeholder="functionality" />
+          <input id="upload-version" type="text" placeholder="version *" required />
+          <input id="upload-functionality" type="text" placeholder="functionality *" required />
         </div>
         <div class="meta-row">
-          <input id="upload-tags" type="text" placeholder="tags: comma,separated" />
+          <input id="upload-tags" type="text" placeholder="tags: comma,separated (optional)" />
         </div>
         <div id="anonymous-only-fields" class="meta-row">
-          <input id="upload-requester" type="text" placeholder="your name or email (optional)" />
+          <input id="upload-requester" type="text" placeholder="your name or email *" required />
         </div>
         <small id="upload-hint-user" class="hint">Suggested metadata helps the admin approve faster — they can override.</small>
         <small id="upload-hint-admin" class="hint" hidden>Admin upload: full metadata applied; document is marked managed.</small>
