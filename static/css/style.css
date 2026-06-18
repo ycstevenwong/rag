@@ -93,6 +93,7 @@ h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
 .pending-requester strong { color: var(--accent); font-weight: 600; }
 .pending-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
 .pending-approve { margin-top: 6px; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+.pending-approve .meta-row select { flex: 1 1 0; min-width: 0; }
 .pending-approve-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
 .pending-approve-actions button {
   font-size: 11px; padding: 3px 8px; border-radius: 3px; cursor: pointer;
