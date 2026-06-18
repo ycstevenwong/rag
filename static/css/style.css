@@ -66,6 +66,11 @@ h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
 .file-drop:hover { border-color: var(--accent); background: var(--panel-2); }
 .file-drop input[type="file"] { display: none; }
 .file-drop small { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.file-drop.disabled {
+  cursor: not-allowed; opacity: 0.5;
+  border-color: var(--border); background: transparent;
+}
+.file-drop.disabled:hover { border-color: var(--border); background: transparent; }
 
 #upload-progress { width: 100%; margin-top: 8px; height: 6px; }
 .status { font-size: 12px; color: var(--muted); margin-top: 6px; min-height: 18px; }

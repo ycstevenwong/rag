@@ -28,6 +28,8 @@
   const anonymousOnlyFieldsEl = document.getElementById("anonymous-only-fields");
   const uploadHintUserEl = document.getElementById("upload-hint-user");
   const uploadHintAdminEl = document.getElementById("upload-hint-admin");
+  const fileDropEl = document.getElementById("file-drop");
+  const fileDropLabelEl = document.getElementById("file-drop-label");
   const pendingSectionEl = document.getElementById("pending-section");
   const pendingListEl = document.getElementById("pending-list");
   const openDocsModalBtn = document.getElementById("open-docs-modal");
@@ -64,6 +66,7 @@
     anonymousOnlyFieldsEl.hidden = !!admin;
     uploadHintUserEl.hidden = !!admin;
     uploadHintAdminEl.hidden = !admin;
+    if (typeof updateFileDropState === "function") updateFileDropState();
   }
 
   async function refreshAdminState() {
@@ -277,6 +280,38 @@
   });
 
   refreshAdminState();
+
+  function getMissingUploadFields() {
+    const missing = [];
+    if (!uploadSourceTypeEl.value) missing.push("source type");
+    if (!uploadAppCodeEl.value) missing.push("app code");
+    if (!uploadVersionEl.value.trim()) missing.push("version");
+    if (!uploadFunctionalityEl.value.trim()) missing.push("functionality");
+    if (!isAdmin && !uploadRequesterEl.value.trim()) missing.push("your name");
+    return missing;
+  }
+
+  function updateFileDropState() {
+    const missing = getMissingUploadFields();
+    if (missing.length) {
+      fileInput.disabled = true;
+      fileDropEl.classList.add("disabled");
+      fileDropLabelEl.textContent = `Fill in: ${missing.join(", ")}`;
+    } else {
+      fileInput.disabled = false;
+      fileDropEl.classList.remove("disabled");
+      fileDropLabelEl.textContent = "Drop file or click";
+    }
+  }
+
+  [
+    uploadSourceTypeEl, uploadAppCodeEl, uploadVersionEl,
+    uploadFunctionalityEl, uploadRequesterEl,
+  ].forEach((el) => {
+    el.addEventListener("input", updateFileDropState);
+    el.addEventListener("change", updateFileDropState);
+  });
+  updateFileDropState();
   sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
   localStorage.setItem("card-rag.session", sessionId);
 
@@ -586,6 +621,7 @@
         }
         uploadProgress.value = 100;
         uploadForm.reset();
+        updateFileDropState();
         refreshDocs();
       } else {
         uploadStatus.classList.add("error");
