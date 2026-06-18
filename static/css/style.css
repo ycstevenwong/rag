@@ -126,7 +126,7 @@ h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
   border: 1px solid var(--border); border-radius: 4px;
   padding: 5px 7px; font-size: 12px; min-width: 0;
 }
-.meta-row select { flex: 0 0 90px; }
+.meta-row select { flex: 0 0 120px; }
 .meta-row input[type="text"] { flex: 1; }
 .hint { color: var(--muted); font-size: 11px; display: block; margin-top: 4px; }
 
