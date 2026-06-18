@@ -13,8 +13,9 @@ DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 INDEX_DIR = DATA_DIR / "index"
 SESSION_DIR = DATA_DIR / "sessions"
+PENDING_DIR = DATA_DIR / "pending"
 
-for d in (UPLOAD_DIR, INDEX_DIR, SESSION_DIR):
+for d in (UPLOAD_DIR, INDEX_DIR, SESSION_DIR, PENDING_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 VECTORS_PATH = INDEX_DIR / "vectors.faiss"

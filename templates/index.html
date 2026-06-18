@@ -38,7 +38,21 @@
           </select>
           <input id="upload-tags" type="text" placeholder="tags: comma,separated" />
         </div>
-        <small class="hint">Uploads are saved as user notes (source: other). Manuals and specs come from the ingest script.</small>
+        <div id="admin-upload-fields" hidden>
+          <div class="meta-row">
+            <select id="upload-source-type" title="Source type">
+              <option value="other" selected>Other</option>
+              <option value="manual">Manual</option>
+              <option value="spec">Spec</option>
+            </select>
+            <input id="upload-version" type="text" placeholder="version (e.g. v1)" />
+          </div>
+          <div class="meta-row">
+            <input id="upload-functionality" type="text" placeholder="functionality (e.g. login)" />
+          </div>
+        </div>
+        <small id="upload-hint-user" class="hint">Uploads are saved as user notes (source: other). Manuals and specs come from the ingest script.</small>
+        <small id="upload-hint-admin" class="hint" hidden>Admin upload: full metadata applied; document is marked managed.</small>
         <label class="file-drop" for="file-input">
           <span>Drop file or click</span>
           <small>pdf · docx · pptx · xlsx · txt · md</small>
@@ -49,6 +63,11 @@
       </form>
       <div id="managed-summary" class="managed-summary" hidden></div>
       <ul id="doc-list" class="doc-list"></ul>
+    </section>
+
+    <section id="pending-section" class="pending" hidden>
+      <h2>Pending review</h2>
+      <ul id="pending-list" class="pending-list"></ul>
     </section>
 
     <section class="filter">

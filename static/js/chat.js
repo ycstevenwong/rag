@@ -21,6 +21,14 @@
   const adminCancelEl = document.getElementById("admin-cancel");
   const adminErrorEl = document.getElementById("admin-error");
   const uploadAppCodeEl = document.getElementById("upload-app-code");
+  const adminUploadFieldsEl = document.getElementById("admin-upload-fields");
+  const uploadSourceTypeEl = document.getElementById("upload-source-type");
+  const uploadVersionEl = document.getElementById("upload-version");
+  const uploadFunctionalityEl = document.getElementById("upload-functionality");
+  const uploadHintUserEl = document.getElementById("upload-hint-user");
+  const uploadHintAdminEl = document.getElementById("upload-hint-admin");
+  const pendingSectionEl = document.getElementById("pending-section");
+  const pendingListEl = document.getElementById("pending-list");
   const uploadTagsEl = document.getElementById("upload-tags");
   const filterSourceTypeEl = document.getElementById("filter-source-type");
   const filterAppCodeEl = document.getElementById("filter-app-code");
@@ -33,12 +41,19 @@
   function setAdminButton(enabled, admin) {
     if (!enabled) {
       adminToggleEl.hidden = true;
+      isAdmin = false;
+      adminUploadFieldsEl.hidden = true;
+      uploadHintUserEl.hidden = false;
+      uploadHintAdminEl.hidden = true;
       return;
     }
     adminToggleEl.hidden = false;
     isAdmin = !!admin;
     adminToggleEl.textContent = admin ? "🔒 admin" : "🔓 Login";
     adminToggleEl.classList.toggle("is-admin", !!admin);
+    adminUploadFieldsEl.hidden = !admin;
+    uploadHintUserEl.hidden = !!admin;
+    uploadHintAdminEl.hidden = !admin;
   }
 
   async function refreshAdminState() {
@@ -46,10 +61,141 @@
       const r = await fetch("/admin/me");
       const data = await r.json();
       setAdminButton(data.enabled, data.is_admin);
+      if (data.is_admin) refreshPending();
+      else pendingSectionEl.hidden = true;
     } catch {
       setAdminButton(false, false);
     }
   }
+
+  async function refreshPending() {
+    if (!isAdmin) {
+      pendingSectionEl.hidden = true;
+      return;
+    }
+    let items = [];
+    try {
+      const r = await fetch("/admin/pending");
+      const data = await r.json();
+      items = data.items || [];
+    } catch {
+      pendingSectionEl.hidden = true;
+      return;
+    }
+    if (!items.length) {
+      pendingSectionEl.hidden = true;
+      return;
+    }
+    pendingSectionEl.hidden = false;
+    pendingListEl.innerHTML = "";
+    for (const item of items) {
+      const li = document.createElement("li");
+      li.className = "pending-item";
+      const metaBits = [
+        item.app_code ? `app:${escapeHtml(item.app_code)}` : "",
+        item.tags && item.tags.length ? `tags:${item.tags.map(escapeHtml).join(",")}` : "",
+      ].filter(Boolean).join(" · ");
+      li.innerHTML = `
+        <div class="pending-head">
+          <span class="name" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
+          <button data-action="reject" data-id="${item.pending_id}" class="reject" title="Reject">✕</button>
+        </div>
+        ${metaBits ? `<div class="pending-meta">${metaBits}</div>` : ""}
+        <div class="pending-approve" data-id="${item.pending_id}" hidden>
+          <div class="meta-row">
+            <select data-field="source_type">
+              <option value="other" selected>Other</option>
+              <option value="manual">Manual</option>
+              <option value="spec">Spec</option>
+            </select>
+            <input data-field="version" type="text" placeholder="version" />
+          </div>
+          <div class="meta-row">
+            <input data-field="functionality" type="text" placeholder="functionality" />
+          </div>
+          <div class="pending-approve-actions">
+            <button type="button" data-action="cancel-approve">Cancel</button>
+            <button type="button" data-action="confirm-approve" class="primary">Approve &amp; ingest</button>
+          </div>
+        </div>
+        <div class="pending-status status" hidden></div>
+        <button class="approve" data-action="approve" data-id="${item.pending_id}">Approve…</button>
+      `;
+      pendingListEl.appendChild(li);
+    }
+  }
+
+  pendingListEl.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const li = btn.closest(".pending-item");
+    if (!li) return;
+    const pendingId = btn.dataset.id || li.querySelector("[data-id]").dataset.id;
+
+    if (action === "reject") {
+      if (!confirm("Reject and delete this upload?")) return;
+      await fetch(`/admin/pending/${pendingId}/reject`, { method: "POST" });
+      refreshPending();
+      return;
+    }
+    if (action === "approve") {
+      li.querySelector(".pending-approve").hidden = false;
+      btn.hidden = true;
+      return;
+    }
+    if (action === "cancel-approve") {
+      li.querySelector(".pending-approve").hidden = true;
+      li.querySelector("[data-action='approve']").hidden = false;
+      return;
+    }
+    if (action === "confirm-approve") {
+      const approveBlock = li.querySelector(".pending-approve");
+      const statusEl = li.querySelector(".pending-status");
+      const payload = {
+        source_type: approveBlock.querySelector("[data-field='source_type']").value,
+        version: approveBlock.querySelector("[data-field='version']").value,
+        functionality: approveBlock.querySelector("[data-field='functionality']").value,
+      };
+      btn.disabled = true;
+      statusEl.hidden = false;
+      statusEl.classList.remove("error");
+      statusEl.textContent = "Ingesting…";
+      try {
+        const r = await fetch(`/admin/pending/${pendingId}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf("\n\n")) >= 0) {
+            const raw = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 2);
+            if (!raw.startsWith("data:")) continue;
+            try {
+              const evt = JSON.parse(raw.slice(5).trim());
+              if (evt.type === "stage") statusEl.textContent = `${evt.stage}…`;
+              else if (evt.type === "progress") statusEl.textContent = `Embedding ${evt.done}/${evt.total}…`;
+              else if (evt.type === "error") { statusEl.classList.add("error"); statusEl.textContent = evt.error; }
+            } catch {}
+          }
+        }
+        refreshPending();
+        refreshDocs();
+      } catch (err) {
+        statusEl.classList.add("error");
+        statusEl.textContent = err.message;
+        btn.disabled = false;
+      }
+    }
+  });
 
   function openLoginModal() {
     adminErrorEl.hidden = true;
@@ -99,6 +245,7 @@
       setAdminButton(true, isAdmin);
       closeLoginModal();
       refreshDocs();
+      refreshPending();
     } catch (err) {
       adminErrorEl.textContent = err.message;
       adminErrorEl.hidden = false;
@@ -175,6 +322,11 @@
     fd.append("file", file);
     fd.append("app_code", uploadAppCodeEl.value || "");
     fd.append("tags", uploadTagsEl.value || "");
+    if (isAdmin) {
+      fd.append("source_type", uploadSourceTypeEl.value || "other");
+      fd.append("version", uploadVersionEl.value || "");
+      fd.append("functionality", uploadFunctionalityEl.value || "");
+    }
     uploadStatus.classList.remove("error");
     uploadStatus.textContent = `Uploading ${file.name}…`;
     uploadProgress.hidden = false;
@@ -216,6 +368,8 @@
           uploadStatus.textContent = `Embedding batch ${evt.done}/${evt.total}…`;
         } else if (evt.type === "done") {
           finalResult = evt.result;
+        } else if (evt.type === "queued") {
+          finalResult = { queued: true, filename: evt.filename };
         } else if (evt.type === "error") {
           finalError = new Error(evt.error);
         }
@@ -227,11 +381,15 @@
         uploadStatus.classList.add("error");
         uploadStatus.textContent = finalError.message;
       } else if (finalResult) {
-        uploadStatus.textContent = finalResult.duplicate
-          ? "Already indexed."
-          : finalResult.linked
-            ? `Linked to existing content (${finalResult.n_chunks} chunks).`
-            : `Indexed ${finalResult.n_chunks} chunks.`;
+        if (finalResult.queued) {
+          uploadStatus.textContent = `Uploaded — awaiting admin approval.`;
+        } else {
+          uploadStatus.textContent = finalResult.duplicate
+            ? "Already indexed."
+            : finalResult.linked
+              ? `Linked to existing content (${finalResult.n_chunks} chunks).`
+              : `Indexed ${finalResult.n_chunks} chunks.`;
+        }
         uploadProgress.value = 100;
         uploadForm.reset();
         refreshDocs();

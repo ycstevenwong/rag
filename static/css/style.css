@@ -76,6 +76,31 @@ h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
   padding: 6px 8px; background: var(--panel-2);
   border: 1px solid var(--border); border-radius: 4px;
 }
+
+.pending-list { list-style: none; padding: 0; margin: 6px 0 0; display: flex; flex-direction: column; gap: 8px; }
+.pending-item {
+  background: var(--panel-2); border: 1px solid var(--accent);
+  border-radius: 6px; padding: 8px 10px; font-size: 12.5px;
+}
+.pending-head { display: flex; align-items: center; gap: 6px; }
+.pending-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+.pending-approve { margin-top: 6px; padding: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+.pending-approve-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.pending-approve-actions button {
+  font-size: 11px; padding: 3px 8px; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.pending-approve-actions button.primary { background: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 600; }
+.pending-item button.approve {
+  margin-top: 6px; font-size: 11px; padding: 3px 10px; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--accent); background: transparent; color: var(--accent);
+}
+.pending-item button.reject {
+  background: transparent; color: var(--muted); border: none; cursor: pointer; padding: 2px 6px;
+}
+.pending-item button.reject:hover { color: var(--danger); }
+.pending-status { margin-top: 4px; }
 .doc-list { list-style: none; padding: 0; margin: 12px 0 0; }
 .doc-list li {
   display: flex; align-items: center; justify-content: space-between;

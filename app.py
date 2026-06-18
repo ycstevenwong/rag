@@ -19,6 +19,7 @@ from rag.bm25_store import BM25Store
 from rag.chat import ChatService
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
+from rag.pending import PendingStore
 from rag.retriever import HybridRetriever
 from rag.vector_store import FaissStore
 
@@ -66,6 +67,7 @@ def create_app() -> Flask:
     )
     bm25_store = BM25Store(cfg.BM25_PATH)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
+    pending_store = PendingStore(cfg.PENDING_DIR)
     retriever = HybridRetriever(vector_store, bm25_store, embedder)
     chat_service = ChatService(retriever)
 
@@ -114,13 +116,31 @@ def create_app() -> Flask:
         tmp_name = f"{uuid.uuid4().hex}{ext}"
         dest = cfg.UPLOAD_DIR / tmp_name
         original = f.filename
-        # UI uploads are always scratch / "other" — manuals and specs are
-        # script-managed. Ignore any client-supplied source_type.
-        source_type = "other"
         raw_tags = request.form.get("tags") or ""
         tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         app_code = (request.form.get("app_code") or "").strip()
         f.save(dest)
+
+        # Anonymous uploads go to the pending queue; admin uploads ingest now.
+        if not _is_admin():
+            item = pending_store.add(dest, original, app_code, tags)
+
+            def event_stream():
+                yield _sse({
+                    "type": "queued",
+                    "pending_id": item.pending_id,
+                    "filename": item.filename,
+                })
+
+            return Response(
+                stream_with_context(event_stream()),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        source_type = (request.form.get("source_type") or "other").strip().lower()
+        version = (request.form.get("version") or "").strip()
+        functionality = (request.form.get("functionality") or "").strip()
 
         def event_stream():
             try:
@@ -130,6 +150,9 @@ def create_app() -> Flask:
                     source_type=source_type,
                     tags=tags,
                     app_code=app_code,
+                    version=version,
+                    functionality=functionality,
+                    managed=True,
                 ):
                     yield _sse(event)
             except Exception as exc:
@@ -186,6 +209,67 @@ def create_app() -> Flask:
     def admin_logout():
         session.pop("is_admin", None)
         return jsonify({"is_admin": False})
+
+    @app.get("/admin/pending")
+    def admin_pending_list():
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
+        items = [asdict(i) for i in pending_store.list()]
+        return jsonify({"items": items})
+
+    @app.post("/admin/pending/<pending_id>/reject")
+    def admin_pending_reject(pending_id: str):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
+        item = pending_store.get(pending_id)
+        if item is None:
+            return jsonify({"error": "Not found"}), 404
+        pending_store.remove(pending_id)
+        return jsonify({"rejected": pending_id})
+
+    @app.post("/admin/pending/<pending_id>/approve")
+    def admin_pending_approve(pending_id: str):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
+        item = pending_store.get(pending_id)
+        if item is None:
+            return jsonify({"error": "Not found"}), 404
+        payload = request.get_json(silent=True) or {}
+        source_type = (payload.get("source_type") or "other").strip().lower()
+        version = (payload.get("version") or "").strip()
+        functionality = (payload.get("functionality") or "").strip()
+        # Admin may override user-supplied app_code/tags
+        app_code = (payload.get("app_code") or item.app_code or "").strip()
+        raw_tags = payload.get("tags") or item.tags or []
+        if isinstance(raw_tags, str):
+            tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        else:
+            tags = [t for t in raw_tags if isinstance(t, str) and t.strip()]
+        file_path = pending_store.file_path(item)
+
+        def event_stream():
+            try:
+                for event in ingest.ingest_stream(
+                    file_path,
+                    original_filename=item.filename,
+                    source_type=source_type,
+                    tags=tags,
+                    app_code=app_code,
+                    version=version,
+                    functionality=functionality,
+                    managed=True,
+                ):
+                    yield _sse(event)
+            except Exception as exc:
+                yield _sse({"type": "error", "error": str(exc)})
+            finally:
+                pending_store.remove(pending_id)
+
+        return Response(
+            stream_with_context(event_stream()),
+            mimetype="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     @app.get("/chunks/<int:chunk_id>")
     def get_chunk(chunk_id: int):
