@@ -27,7 +27,34 @@ aside, main { overflow: hidden; display: flex; flex-direction: column; }
 .sidebar { background: var(--panel); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
 .sources { background: var(--panel); border-left: 1px solid var(--border); padding: 16px; overflow-y: auto; }
 
+.brand-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
+.admin-toggle {
+  font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer;
+  background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+}
+.admin-toggle:hover { border-color: var(--accent); }
+.admin-toggle.is-admin { background: var(--accent); color: #ffffff; border-color: var(--accent); }
+
+.admin-modal {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+  padding: 10px; margin: 8px 0 16px;
+}
+.admin-modal form { display: flex; flex-direction: column; gap: 6px; }
+.admin-modal input {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px; font-size: 13px;
+}
+.admin-modal input:focus { outline: none; border-color: var(--accent); }
+.admin-modal-actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 4px; }
+.admin-modal-actions button {
+  font-size: 12px; padding: 4px 10px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+}
+.admin-modal-actions button#admin-submit {
+  background: var(--accent); color: #ffffff; border-color: var(--accent); font-weight: 600;
+}
+.admin-error { font-size: 12px; color: var(--danger); }
 .meta { color: var(--muted); font-size: 12px; margin: 0 0 24px; }
 .sidebar h2, .sources h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 20px 0 8px; }
 

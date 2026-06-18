@@ -8,8 +8,23 @@
 </head>
 <body>
   <aside class="sidebar">
-    <h1 class="brand">card-rag</h1>
+    <div class="brand-row">
+      <h1 class="brand">card-rag</h1>
+      <button id="admin-toggle" class="admin-toggle" type="button" hidden></button>
+    </div>
     <p class="meta">{{ model }}</p>
+
+    <div id="admin-modal" class="admin-modal" hidden>
+      <form id="admin-login-form">
+        <input id="admin-username" type="text" placeholder="username" autocomplete="username" required />
+        <input id="admin-password" type="password" placeholder="password" autocomplete="current-password" required />
+        <div class="admin-modal-actions">
+          <button type="button" id="admin-cancel">Cancel</button>
+          <button type="submit" id="admin-submit">Sign in</button>
+        </div>
+        <div id="admin-error" class="admin-error" hidden></div>
+      </form>
+    </div>
 
     <section class="upload">
       <h2>Documents</h2>

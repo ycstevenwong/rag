@@ -13,6 +13,13 @@
   const uploadProgress = document.getElementById("upload-progress");
   const sourcesListEl = document.getElementById("sources-list");
   const rewrittenQueryEl = document.getElementById("rewritten-query");
+  const adminToggleEl = document.getElementById("admin-toggle");
+  const adminModalEl = document.getElementById("admin-modal");
+  const adminLoginFormEl = document.getElementById("admin-login-form");
+  const adminUsernameEl = document.getElementById("admin-username");
+  const adminPasswordEl = document.getElementById("admin-password");
+  const adminCancelEl = document.getElementById("admin-cancel");
+  const adminErrorEl = document.getElementById("admin-error");
   const uploadAppCodeEl = document.getElementById("upload-app-code");
   const uploadTagsEl = document.getElementById("upload-tags");
   const filterSourceTypeEl = document.getElementById("filter-source-type");
@@ -21,6 +28,84 @@
 
   let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
   let currentSources = [];
+  let isAdmin = false;
+
+  function setAdminButton(enabled, admin) {
+    if (!enabled) {
+      adminToggleEl.hidden = true;
+      return;
+    }
+    adminToggleEl.hidden = false;
+    isAdmin = !!admin;
+    adminToggleEl.textContent = admin ? "🔒 admin" : "🔓 Login";
+    adminToggleEl.classList.toggle("is-admin", !!admin);
+  }
+
+  async function refreshAdminState() {
+    try {
+      const r = await fetch("/admin/me");
+      const data = await r.json();
+      setAdminButton(data.enabled, data.is_admin);
+    } catch {
+      setAdminButton(false, false);
+    }
+  }
+
+  function openLoginModal() {
+    adminErrorEl.hidden = true;
+    adminErrorEl.textContent = "";
+    adminModalEl.hidden = false;
+    setTimeout(() => adminUsernameEl.focus(), 0);
+  }
+
+  function closeLoginModal() {
+    adminModalEl.hidden = true;
+    adminLoginFormEl.reset();
+  }
+
+  adminToggleEl.addEventListener("click", async () => {
+    if (isAdmin) {
+      if (!confirm("Log out of admin?")) return;
+      await fetch("/admin/logout", { method: "POST" });
+      isAdmin = false;
+      setAdminButton(true, false);
+      refreshDocs();
+      return;
+    }
+    openLoginModal();
+  });
+
+  adminCancelEl.addEventListener("click", closeLoginModal);
+
+  adminLoginFormEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    adminErrorEl.hidden = true;
+    try {
+      const r = await fetch("/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: adminUsernameEl.value,
+          password: adminPasswordEl.value,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        adminErrorEl.textContent = data.error || `Error ${r.status}`;
+        adminErrorEl.hidden = false;
+        return;
+      }
+      isAdmin = !!data.is_admin;
+      setAdminButton(true, isAdmin);
+      closeLoginModal();
+      refreshDocs();
+    } catch (err) {
+      adminErrorEl.textContent = err.message;
+      adminErrorEl.hidden = false;
+    }
+  });
+
+  refreshAdminState();
   sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
   localStorage.setItem("card-rag.session", sessionId);
 
@@ -63,9 +148,9 @@
       const li = document.createElement("li");
       const typeBadge = d.source_type && d.source_type !== "other"
         ? `<span class="type-badge">${escapeHtml(d.source_type)}</span>` : "";
-      const control = d.managed
+      const control = (d.managed && !isAdmin)
         ? `<span class="locked" title="Managed by ingest script — delete on disk and re-run">🔒</span>`
-        : `<button data-id="${d.doc_id}" title="Delete">✕</button>`;
+        : `<button data-id="${d.doc_id}" title="${d.managed ? 'Delete managed doc (admin)' : 'Delete'}">✕</button>`;
       li.innerHTML = `<span class="name" title="${escapeHtml(d.filename)}">${escapeHtml(d.filename)}</span>
                      ${typeBadge}
                      <span class="count">${d.n_chunks}</span>

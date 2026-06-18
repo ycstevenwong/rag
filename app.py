@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
 import uuid
 from dataclasses import asdict
+from datetime import timedelta
 from pathlib import Path
 
 from flask import (
-    Flask, Response, jsonify, render_template, request, stream_with_context
+    Flask, Response, jsonify, render_template, request, session, stream_with_context
 )
+from werkzeug.security import check_password_hash
 
 import config as cfg
 from rag.bm25_store import BM25Store
@@ -21,11 +24,38 @@ from rag.vector_store import FaissStore
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
 
+# Login rate limit — per remote IP, in-memory, cleared on success.
+_LOGIN_WINDOW_SECONDS = 300   # 5 minutes
+_LOGIN_MAX_FAILURES = 5
+_login_failures: dict[str, list[float]] = {}
+
+
+def _login_allowed(ip: str) -> bool:
+    now = time.time()
+    fails = [t for t in _login_failures.get(ip, []) if now - t < _LOGIN_WINDOW_SECONDS]
+    _login_failures[ip] = fails
+    return len(fails) < _LOGIN_MAX_FAILURES
+
+
+def _record_login_failure(ip: str) -> None:
+    _login_failures.setdefault(ip, []).append(time.time())
+
+
+def _is_admin() -> bool:
+    return bool(session.get("is_admin"))
+
+
+def _admin_enabled() -> bool:
+    return bool(cfg.ADMIN_USERNAME and cfg.ADMIN_PASSWORD_HASH)
+
 
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_UPLOAD_MB * 1024 * 1024
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=cfg.SESSION_LIFETIME_HOURS)
 
     embedder = Embedder(cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BASE_URL, cfg.EMBEDDING_API_KEY)
     vector_store = FaissStore(
@@ -51,10 +81,12 @@ def create_app() -> Flask:
     def list_docs():
         items = []
         managed_count = 0
+        admin = _is_admin()
         for d in vector_store.docs:
             if d.managed:
                 managed_count += 1
-                continue
+                if not admin:
+                    continue
             f = vector_store.get_file(d.file_id)
             entry = asdict(d)
             if f is not None:
@@ -117,10 +149,43 @@ def create_app() -> Flask:
     @app.delete("/docs/<doc_id>")
     def delete_doc(doc_id: str):
         doc = next((d for d in vector_store.docs if d.doc_id == doc_id), None)
-        if doc and doc.managed:
-            return jsonify({"error": "Managed document; delete via ingest script."}), 403
+        if doc and doc.managed and not _is_admin():
+            return jsonify({"error": "Managed document; admin login required."}), 403
         removed = ingest.delete(doc_id)
         return jsonify({"removed_chunks": removed})
+
+    @app.get("/admin/me")
+    def admin_me():
+        return jsonify({
+            "enabled": _admin_enabled(),
+            "is_admin": _is_admin(),
+        })
+
+    @app.post("/admin/login")
+    def admin_login():
+        if not _admin_enabled():
+            return jsonify({"error": "Admin login is not configured."}), 503
+        ip = request.remote_addr or "unknown"
+        if not _login_allowed(ip):
+            return jsonify({"error": "Too many failed attempts. Try again in a few minutes."}), 429
+        payload = request.get_json(force=True) or {}
+        username = (payload.get("username") or "").strip()
+        password = payload.get("password") or ""
+        if (
+            username != cfg.ADMIN_USERNAME
+            or not check_password_hash(cfg.ADMIN_PASSWORD_HASH, password)
+        ):
+            _record_login_failure(ip)
+            return jsonify({"error": "Invalid username or password."}), 401
+        _login_failures.pop(ip, None)
+        session.permanent = True
+        session["is_admin"] = True
+        return jsonify({"is_admin": True})
+
+    @app.post("/admin/logout")
+    def admin_logout():
+        session.pop("is_admin", None)
+        return jsonify({"is_admin": False})
 
     @app.get("/chunks/<int:chunk_id>")
     def get_chunk(chunk_id: int):
