@@ -21,10 +21,11 @@
   const adminCancelEl = document.getElementById("admin-cancel");
   const adminErrorEl = document.getElementById("admin-error");
   const uploadAppCodeEl = document.getElementById("upload-app-code");
-  const adminUploadFieldsEl = document.getElementById("admin-upload-fields");
   const uploadSourceTypeEl = document.getElementById("upload-source-type");
   const uploadVersionEl = document.getElementById("upload-version");
   const uploadFunctionalityEl = document.getElementById("upload-functionality");
+  const uploadRequesterEl = document.getElementById("upload-requester");
+  const anonymousOnlyFieldsEl = document.getElementById("anonymous-only-fields");
   const uploadHintUserEl = document.getElementById("upload-hint-user");
   const uploadHintAdminEl = document.getElementById("upload-hint-admin");
   const pendingSectionEl = document.getElementById("pending-section");
@@ -42,7 +43,7 @@
     if (!enabled) {
       adminToggleEl.hidden = true;
       isAdmin = false;
-      adminUploadFieldsEl.hidden = true;
+      anonymousOnlyFieldsEl.hidden = false;
       uploadHintUserEl.hidden = false;
       uploadHintAdminEl.hidden = true;
       return;
@@ -51,7 +52,7 @@
     isAdmin = !!admin;
     adminToggleEl.textContent = admin ? "🔒 admin" : "🔓 Login";
     adminToggleEl.classList.toggle("is-admin", !!admin);
-    adminUploadFieldsEl.hidden = !admin;
+    anonymousOnlyFieldsEl.hidden = !!admin;
     uploadHintUserEl.hidden = !!admin;
     uploadHintAdminEl.hidden = !admin;
   }
@@ -92,26 +93,38 @@
       const li = document.createElement("li");
       li.className = "pending-item";
       const metaBits = [
+        item.source_type ? `type:${escapeHtml(item.source_type)}` : "",
         item.app_code ? `app:${escapeHtml(item.app_code)}` : "",
+        item.version ? `ver:${escapeHtml(item.version)}` : "",
+        item.functionality ? `func:${escapeHtml(item.functionality)}` : "",
         item.tags && item.tags.length ? `tags:${item.tags.map(escapeHtml).join(",")}` : "",
       ].filter(Boolean).join(" · ");
+      const requesterLine = item.requester
+        ? `<div class="pending-requester">requested by <strong>${escapeHtml(item.requester)}</strong></div>` : "";
+      const sourceTypeOptions = ["other", "manual", "spec"].map(v =>
+        `<option value="${v}"${item.source_type === v ? " selected" : ""}>${v[0].toUpperCase() + v.slice(1)}</option>`
+      ).join("");
+      const appCodeOptions = Array.from(uploadAppCodeEl.options).map(opt =>
+        `<option value="${escapeHtml(opt.value)}"${item.app_code === opt.value ? " selected" : ""}>${escapeHtml(opt.text)}</option>`
+      ).join("");
       li.innerHTML = `
         <div class="pending-head">
           <span class="name" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</span>
           <button data-action="reject" data-id="${item.pending_id}" class="reject" title="Reject">✕</button>
         </div>
+        ${requesterLine}
         ${metaBits ? `<div class="pending-meta">${metaBits}</div>` : ""}
         <div class="pending-approve" data-id="${item.pending_id}" hidden>
           <div class="meta-row">
-            <select data-field="source_type">
-              <option value="other" selected>Other</option>
-              <option value="manual">Manual</option>
-              <option value="spec">Spec</option>
-            </select>
-            <input data-field="version" type="text" placeholder="version" />
+            <select data-field="source_type">${sourceTypeOptions}</select>
+            <select data-field="app_code">${appCodeOptions}</select>
           </div>
           <div class="meta-row">
-            <input data-field="functionality" type="text" placeholder="functionality" />
+            <input data-field="version" type="text" placeholder="version" value="${escapeHtml(item.version || "")}" />
+            <input data-field="functionality" type="text" placeholder="functionality" value="${escapeHtml(item.functionality || "")}" />
+          </div>
+          <div class="meta-row">
+            <input data-field="tags" type="text" placeholder="tags" value="${escapeHtml((item.tags || []).join(","))}" />
           </div>
           <div class="pending-approve-actions">
             <button type="button" data-action="cancel-approve">Cancel</button>
@@ -154,8 +167,10 @@
       const statusEl = li.querySelector(".pending-status");
       const payload = {
         source_type: approveBlock.querySelector("[data-field='source_type']").value,
+        app_code: approveBlock.querySelector("[data-field='app_code']").value,
         version: approveBlock.querySelector("[data-field='version']").value,
         functionality: approveBlock.querySelector("[data-field='functionality']").value,
+        tags: approveBlock.querySelector("[data-field='tags']").value,
       };
       btn.disabled = true;
       statusEl.hidden = false;
@@ -322,10 +337,11 @@
     fd.append("file", file);
     fd.append("app_code", uploadAppCodeEl.value || "");
     fd.append("tags", uploadTagsEl.value || "");
-    if (isAdmin) {
-      fd.append("source_type", uploadSourceTypeEl.value || "other");
-      fd.append("version", uploadVersionEl.value || "");
-      fd.append("functionality", uploadFunctionalityEl.value || "");
+    fd.append("source_type", uploadSourceTypeEl.value || "other");
+    fd.append("version", uploadVersionEl.value || "");
+    fd.append("functionality", uploadFunctionalityEl.value || "");
+    if (!isAdmin) {
+      fd.append("requester", uploadRequesterEl.value || "");
     }
     uploadStatus.classList.remove("error");
     uploadStatus.textContent = `Uploading ${file.name}…`;

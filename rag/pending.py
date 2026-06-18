@@ -31,6 +31,10 @@ class PendingItem:
     uploaded_at: float
     app_code: str = ""
     tags: list[str] = field(default_factory=list)
+    source_type: str = ""
+    version: str = ""
+    functionality: str = ""
+    requester: str = ""
 
 
 class PendingStore:
@@ -42,8 +46,12 @@ class PendingStore:
         self,
         source_path: Path,
         original_filename: str,
-        app_code: str,
-        tags: list[str],
+        app_code: str = "",
+        tags: list[str] | None = None,
+        source_type: str = "",
+        version: str = "",
+        functionality: str = "",
+        requester: str = "",
     ) -> PendingItem:
         pending_id = uuid.uuid4().hex
         ext = Path(original_filename).suffix.lower()
@@ -58,7 +66,11 @@ class PendingStore:
             sha256=sha,
             uploaded_at=time.time(),
             app_code=app_code.strip(),
-            tags=list(tags),
+            tags=list(tags or []),
+            source_type=source_type.strip().lower(),
+            version=version.strip(),
+            functionality=functionality.strip(),
+            requester=requester.strip(),
         )
         dest_meta.write_text(
             json.dumps(asdict(item), ensure_ascii=False, indent=2),

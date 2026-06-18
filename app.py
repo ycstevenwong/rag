@@ -119,11 +119,24 @@ def create_app() -> Flask:
         raw_tags = request.form.get("tags") or ""
         tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         app_code = (request.form.get("app_code") or "").strip()
+        source_type = (request.form.get("source_type") or "").strip().lower()
+        version = (request.form.get("version") or "").strip()
+        functionality = (request.form.get("functionality") or "").strip()
+        requester = (request.form.get("requester") or "").strip()
         f.save(dest)
 
         # Anonymous uploads go to the pending queue; admin uploads ingest now.
         if not _is_admin():
-            item = pending_store.add(dest, original, app_code, tags)
+            item = pending_store.add(
+                dest,
+                original,
+                app_code=app_code,
+                tags=tags,
+                source_type=source_type or "other",
+                version=version,
+                functionality=functionality,
+                requester=requester,
+            )
 
             def event_stream():
                 yield _sse({
@@ -138,9 +151,10 @@ def create_app() -> Flask:
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        source_type = (request.form.get("source_type") or "other").strip().lower()
-        version = (request.form.get("version") or "").strip()
-        functionality = (request.form.get("functionality") or "").strip()
+        # Admin path uses the same source_type/version/functionality but defaults
+        # source_type to "other" if blank (anonymous uses the form's hint).
+        if not source_type:
+            source_type = "other"
 
         def event_stream():
             try:
@@ -235,13 +249,15 @@ def create_app() -> Flask:
         if item is None:
             return jsonify({"error": "Not found"}), 404
         payload = request.get_json(silent=True) or {}
-        source_type = (payload.get("source_type") or "other").strip().lower()
-        version = (payload.get("version") or "").strip()
-        functionality = (payload.get("functionality") or "").strip()
-        # Admin may override user-supplied app_code/tags
+        # Admin may override every value, but defaults to what the requester suggested.
+        source_type = (payload.get("source_type") or item.source_type or "other").strip().lower()
+        version = (payload.get("version") or item.version or "").strip()
+        functionality = (payload.get("functionality") or item.functionality or "").strip()
         app_code = (payload.get("app_code") or item.app_code or "").strip()
-        raw_tags = payload.get("tags") or item.tags or []
-        if isinstance(raw_tags, str):
+        raw_tags = payload.get("tags")
+        if raw_tags is None:
+            tags = list(item.tags or [])
+        elif isinstance(raw_tags, str):
             tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
         else:
             tags = [t for t in raw_tags if isinstance(t, str) and t.strip()]

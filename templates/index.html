@@ -30,28 +30,29 @@
       <h2>Documents</h2>
       <form id="upload-form">
         <div class="meta-row">
+          <select id="upload-source-type" title="Source type">
+            <option value="other" selected>Other</option>
+            <option value="manual">Manual</option>
+            <option value="spec">Spec</option>
+          </select>
           <select id="upload-app-code" title="App code">
             <option value="">No app code</option>
             {% for code in app_codes %}
             <option value="{{ code }}">{{ code }}</option>
             {% endfor %}
           </select>
+        </div>
+        <div class="meta-row">
+          <input id="upload-version" type="text" placeholder="version (e.g. v1)" />
+          <input id="upload-functionality" type="text" placeholder="functionality" />
+        </div>
+        <div class="meta-row">
           <input id="upload-tags" type="text" placeholder="tags: comma,separated" />
         </div>
-        <div id="admin-upload-fields" hidden>
-          <div class="meta-row">
-            <select id="upload-source-type" title="Source type">
-              <option value="other" selected>Other</option>
-              <option value="manual">Manual</option>
-              <option value="spec">Spec</option>
-            </select>
-            <input id="upload-version" type="text" placeholder="version (e.g. v1)" />
-          </div>
-          <div class="meta-row">
-            <input id="upload-functionality" type="text" placeholder="functionality (e.g. login)" />
-          </div>
+        <div id="anonymous-only-fields" class="meta-row">
+          <input id="upload-requester" type="text" placeholder="your name or email (optional)" />
         </div>
-        <small id="upload-hint-user" class="hint">Uploads are saved as user notes (source: other). Manuals and specs come from the ingest script.</small>
+        <small id="upload-hint-user" class="hint">Suggested metadata helps the admin approve faster — they can override.</small>
         <small id="upload-hint-admin" class="hint" hidden>Admin upload: full metadata applied; document is marked managed.</small>
         <label class="file-drop" for="file-input">
           <span>Drop file or click</span>
