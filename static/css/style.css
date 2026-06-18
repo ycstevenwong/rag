@@ -116,6 +116,7 @@ h1.brand { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.5px; }
   display: flex; align-items: center; justify-content: center;
   z-index: 1000; padding: 20px;
 }
+.modal-overlay[hidden] { display: none; }
 .modal {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: 8px; width: min(960px, 100%); max-height: 90vh;
