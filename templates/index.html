@@ -64,6 +64,7 @@
         <div id="upload-status" class="status"></div>
       </form>
       <div id="managed-summary" class="managed-summary" hidden></div>
+      <button id="open-docs-modal" class="manage-docs-btn" type="button" hidden></button>
       <ul id="doc-list" class="doc-list"></ul>
     </section>
 
@@ -126,6 +127,47 @@
       <p class="empty">Cited sources will appear here.</p>
     </div>
   </aside>
+
+  <div id="docs-modal" class="modal-overlay" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Documents</h2>
+        <button id="docs-modal-close" class="modal-close" type="button" title="Close">✕</button>
+      </div>
+      <div class="modal-toolbar">
+        <input id="docs-search" type="text" placeholder="search filename…" />
+        <select id="docs-filter-type">
+          <option value="">All types</option>
+          <option value="manual">Manual</option>
+          <option value="spec">Spec</option>
+          <option value="other">Other</option>
+        </select>
+        <select id="docs-filter-app">
+          <option value="">All apps</option>
+          {% for code in app_codes %}
+          <option value="{{ code }}">{{ code }}</option>
+          {% endfor %}
+        </select>
+        <span id="docs-count" class="docs-count"></span>
+      </div>
+      <div class="modal-body">
+        <table class="docs-table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Type</th>
+              <th>App</th>
+              <th>Ver</th>
+              <th>Func</th>
+              <th>Chunks</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="docs-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
 </body>

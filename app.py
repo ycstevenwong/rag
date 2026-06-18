@@ -191,6 +191,31 @@ def create_app() -> Flask:
         removed = ingest.delete(doc_id)
         return jsonify({"removed_chunks": removed})
 
+    @app.patch("/docs/<doc_id>")
+    def update_doc(doc_id: str):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
+        doc = next((d for d in vector_store.docs if d.doc_id == doc_id), None)
+        if doc is None:
+            return jsonify({"error": "Not found"}), 404
+        payload = request.get_json(silent=True) or {}
+        if "source_type" in payload:
+            doc.source_type = (str(payload["source_type"]).strip().lower() or "other")
+        if "app_code" in payload:
+            doc.app_code = str(payload["app_code"]).strip()
+        if "version" in payload:
+            doc.version = str(payload["version"]).strip()
+        if "functionality" in payload:
+            doc.functionality = str(payload["functionality"]).strip()
+        if "tags" in payload:
+            raw_tags = payload["tags"]
+            if isinstance(raw_tags, str):
+                doc.tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            else:
+                doc.tags = [t for t in raw_tags if isinstance(t, str) and t.strip()]
+        vector_store.persist()
+        return jsonify({"updated": doc_id})
+
     @app.get("/admin/me")
     def admin_me():
         return jsonify({

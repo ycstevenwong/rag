@@ -30,6 +30,14 @@
   const uploadHintAdminEl = document.getElementById("upload-hint-admin");
   const pendingSectionEl = document.getElementById("pending-section");
   const pendingListEl = document.getElementById("pending-list");
+  const openDocsModalBtn = document.getElementById("open-docs-modal");
+  const docsModalEl = document.getElementById("docs-modal");
+  const docsModalCloseBtn = document.getElementById("docs-modal-close");
+  const docsSearchEl = document.getElementById("docs-search");
+  const docsFilterTypeEl = document.getElementById("docs-filter-type");
+  const docsFilterAppEl = document.getElementById("docs-filter-app");
+  const docsCountEl = document.getElementById("docs-count");
+  const docsTbodyEl = document.getElementById("docs-tbody");
   const uploadTagsEl = document.getElementById("upload-tags");
   const filterSourceTypeEl = document.getElementById("filter-source-type");
   const filterAppCodeEl = document.getElementById("filter-app-code");
@@ -38,6 +46,7 @@
   let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
   let currentSources = [];
   let isAdmin = false;
+  let allDocs = [];
 
   function setAdminButton(enabled, admin) {
     if (!enabled) {
@@ -290,34 +299,44 @@
   async function refreshDocs() {
     const r = await fetch("/docs");
     const payload = await r.json();
-    const docs = payload.items || [];
+    allDocs = payload.items || [];
     const managedCount = payload.managed_count || 0;
-    const totalCount = managedCount + docs.length;
-    if (totalCount > 0) {
-      managedSummaryEl.hidden = false;
-      managedSummaryEl.textContent = isAdmin
-        ? `${managedCount.toLocaleString()} managed doc${managedCount === 1 ? "" : "s"} in index`
-        : `${totalCount.toLocaleString()} document${totalCount === 1 ? "" : "s"} indexed`;
-    } else {
-      managedSummaryEl.hidden = true;
-      managedSummaryEl.textContent = "";
-    }
+    const totalCount = managedCount + allDocs.filter(d => !d.managed).length;
 
     if (!isAdmin) {
-      // Anonymous users get the count only — no doc list (they can't act on it).
+      managedSummaryEl.hidden = totalCount <= 0;
+      managedSummaryEl.textContent = totalCount > 0
+        ? `${totalCount.toLocaleString()} document${totalCount === 1 ? "" : "s"} indexed`
+        : "";
+      openDocsModalBtn.hidden = true;
       docListEl.innerHTML = "";
       docListEl.hidden = true;
       return;
     }
+
+    // Admin: managed-summary collapses into the manage button (count + action).
+    managedSummaryEl.hidden = true;
+    const adminTotal = allDocs.length;
+    if (adminTotal > 0) {
+      openDocsModalBtn.hidden = false;
+      openDocsModalBtn.textContent = `Manage all docs (${adminTotal.toLocaleString()})`;
+    } else {
+      openDocsModalBtn.hidden = true;
+    }
+
+    // Inline sidebar list shows ONLY unmanaged docs (user uploads).
+    const unmanaged = allDocs.filter(d => !d.managed);
     docListEl.hidden = false;
     docListEl.innerHTML = "";
-    if (!docs.length) {
+    if (!unmanaged.length) {
       const li = document.createElement("li");
-      li.innerHTML = '<span class="name" style="color:var(--muted)">No documents</span>';
+      li.innerHTML = '<span class="name" style="color:var(--muted)">No user uploads</span>';
       docListEl.appendChild(li);
+      // Update modal if it's open.
+      if (!docsModalEl.hidden) renderDocsTable();
       return;
     }
-    for (const d of docs) {
+    for (const d of unmanaged) {
       const li = document.createElement("li");
       const typeBadge = d.source_type && d.source_type !== "other"
         ? `<span class="type-badge">${escapeHtml(d.source_type)}</span>` : "";
@@ -338,8 +357,142 @@
       }
       docListEl.appendChild(li);
     }
+    if (!docsModalEl.hidden) renderDocsTable();
   }
   refreshDocs();
+
+  // ---------- docs management modal ----------
+  function renderDocsTable() {
+    const q = (docsSearchEl.value || "").toLowerCase();
+    const typeFilter = docsFilterTypeEl.value;
+    const appFilter = docsFilterAppEl.value;
+    const filtered = allDocs.filter((d) => {
+      if (q && !(d.filename || "").toLowerCase().includes(q)) return false;
+      if (typeFilter && d.source_type !== typeFilter) return false;
+      if (appFilter && d.app_code !== appFilter) return false;
+      return true;
+    });
+    docsCountEl.textContent = `${filtered.length} of ${allDocs.length}`;
+    docsTbodyEl.innerHTML = "";
+    for (const d of filtered) {
+      const tr = document.createElement("tr");
+      tr.dataset.docId = d.doc_id;
+      tr.innerHTML = `
+        <td class="filename" title="${escapeHtml(d.filename || "")}">${escapeHtml(d.filename || "")}</td>
+        <td>${escapeHtml(d.source_type || "-")}</td>
+        <td>${escapeHtml(d.app_code || "-")}</td>
+        <td>${escapeHtml(d.version || "-")}</td>
+        <td>${escapeHtml(d.functionality || "-")}</td>
+        <td>${d.n_chunks || 0}</td>
+        <td class="actions">
+          <button data-action="edit" title="Edit">✏</button>
+          <button data-action="delete" title="Delete">✕</button>
+        </td>
+      `;
+      docsTbodyEl.appendChild(tr);
+    }
+  }
+
+  openDocsModalBtn.addEventListener("click", () => {
+    docsModalEl.hidden = false;
+    docsSearchEl.value = "";
+    docsFilterTypeEl.value = "";
+    docsFilterAppEl.value = "";
+    renderDocsTable();
+  });
+  docsModalCloseBtn.addEventListener("click", () => { docsModalEl.hidden = true; });
+  docsModalEl.addEventListener("click", (e) => {
+    if (e.target === docsModalEl) docsModalEl.hidden = true;
+  });
+  docsSearchEl.addEventListener("input", renderDocsTable);
+  docsFilterTypeEl.addEventListener("change", renderDocsTable);
+  docsFilterAppEl.addEventListener("change", renderDocsTable);
+
+  function buildEditRow(doc) {
+    const appCodeOptions = Array.from(uploadAppCodeEl.options).map((opt) => {
+      const val = opt.value;
+      const text = opt.text;
+      return `<option value="${escapeHtml(val)}"${doc.app_code === val ? " selected" : ""}>${escapeHtml(text)}</option>`;
+    }).join("");
+    const editRow = document.createElement("tr");
+    editRow.className = "edit-row";
+    editRow.innerHTML = `
+      <td colspan="7">
+        <div class="edit-form">
+          <select data-field="source_type">
+            <option value="other"${doc.source_type === "other" ? " selected" : ""}>Other</option>
+            <option value="manual"${doc.source_type === "manual" ? " selected" : ""}>Manual</option>
+            <option value="spec"${doc.source_type === "spec" ? " selected" : ""}>Spec</option>
+          </select>
+          <select data-field="app_code">${appCodeOptions}</select>
+          <input data-field="version" type="text" placeholder="version" value="${escapeHtml(doc.version || "")}" />
+          <input data-field="functionality" type="text" placeholder="functionality" value="${escapeHtml(doc.functionality || "")}" />
+          <input data-field="tags" type="text" placeholder="tags" value="${escapeHtml((doc.tags || []).join(","))}" />
+          <button type="button" data-action="cancel-edit">Cancel</button>
+          <button type="button" data-action="save-edit" class="primary">Save</button>
+        </div>
+      </td>
+    `;
+    return editRow;
+  }
+
+  docsTbodyEl.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const tr = btn.closest("tr");
+    if (!tr) return;
+
+    if (action === "edit") {
+      const docId = tr.dataset.docId;
+      const doc = allDocs.find((d) => d.doc_id === docId);
+      if (!doc) return;
+      const next = tr.nextElementSibling;
+      if (next && next.classList.contains("edit-row")) {
+        next.remove();
+        return;
+      }
+      tr.parentNode.insertBefore(buildEditRow(doc), tr.nextSibling);
+      return;
+    }
+    if (action === "cancel-edit") {
+      btn.closest("tr.edit-row").remove();
+      return;
+    }
+    if (action === "save-edit") {
+      const editRow = btn.closest("tr.edit-row");
+      const docTr = editRow.previousElementSibling;
+      const docId = docTr.dataset.docId;
+      const payload = {
+        source_type: editRow.querySelector("[data-field='source_type']").value,
+        app_code: editRow.querySelector("[data-field='app_code']").value,
+        version: editRow.querySelector("[data-field='version']").value,
+        functionality: editRow.querySelector("[data-field='functionality']").value,
+        tags: editRow.querySelector("[data-field='tags']").value,
+      };
+      btn.disabled = true;
+      const r = await fetch(`/docs/${docId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (r.ok) {
+        await refreshDocs();
+      } else {
+        btn.disabled = false;
+        alert("Update failed");
+      }
+      return;
+    }
+    if (action === "delete") {
+      const docId = tr.dataset.docId;
+      const doc = allDocs.find((d) => d.doc_id === docId);
+      if (!doc) return;
+      if (!confirm(`Delete "${doc.filename}"?`)) return;
+      const r = await fetch(`/docs/${docId}`, { method: "DELETE" });
+      if (r.ok) await refreshDocs();
+    }
+  });
 
   fileInput.addEventListener("change", () => {
     const file = fileInput.files[0];
