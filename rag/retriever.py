@@ -4,10 +4,16 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+import numpy as np
+
 from . import config_facade as cfg
 from .bm25_store import BM25Store
 from .embeddings import Embedder
 from .vector_store import ChunkRecord, DocRecord, FaissStore
+
+
+MMR_LAMBDA = 0.7        # higher = favor query relevance, lower = favor diversity
+MMR_POOL_MULTIPLIER = 3 # consider 3× top_n RRF candidates before MMR picks the final top_n
 
 
 @dataclass
@@ -37,16 +43,17 @@ class HybridRetriever:
         *,
         k_vector: int = 20,
         k_bm25: int = 20,
-        top_n: int = 6,
+        top_n: int = 10,
         rrf_k: int = 60,
         filters: dict | None = None,
     ) -> list[RetrievedChunk]:
         if not self.vector_store.chunks:
             return []
 
+        q_vec = self.embedder.encode_query(query)
         fetch_mult = 3 if filters else 1
         with ThreadPoolExecutor(max_workers=2) as ex:
-            vec_future = ex.submit(self._vector_search, query, k_vector * fetch_mult)
+            vec_future = ex.submit(self.vector_store.search, q_vec, k_vector * fetch_mult)
             bm25_future = ex.submit(self.bm25_store.search, query, k_bm25 * fetch_mult)
             vec_results = vec_future.result()
             bm25_results = bm25_future.result()
@@ -96,10 +103,17 @@ class HybridRetriever:
             fused.append((cid, s))
 
         fused.sort(key=lambda x: x[1], reverse=True)
-        top = fused[:top_n]
+        fused_score_by_id = {cid: s for cid, s in fused}
+
+        # Apply MMR over a larger RRF pool, then take top_n.
+        pool_size = min(len(fused), max(top_n * MMR_POOL_MULTIPLIER, top_n))
+        pool_ids = [cid for cid, _ in fused[:pool_size]]
+        selected_ids = _mmr_select(
+            q_vec, pool_ids, self.vector_store, top_n, lambda_=MMR_LAMBDA
+        )
 
         out: list[RetrievedChunk] = []
-        for cid, score in top:
+        for cid in selected_ids:
             chunk = self.vector_store.get_chunk(cid)
             if chunk is None:
                 continue
@@ -107,7 +121,7 @@ class HybridRetriever:
             filename = file.filename if file else ""
             out.append(RetrievedChunk(
                 chunk=chunk,
-                score=score,
+                score=fused_score_by_id.get(cid, 0.0),
                 vector_rank=vec_ranks.get(cid),
                 bm25_rank=bm25_ranks.get(cid),
                 filename=filename,
@@ -115,9 +129,54 @@ class HybridRetriever:
             ))
         return out
 
-    def _vector_search(self, query: str, k: int) -> list[tuple[ChunkRecord, float]]:
-        q_vec = self.embedder.encode_query(query)
-        return self.vector_store.search(q_vec, k)
+
+def _mmr_select(
+    query_vec: np.ndarray,
+    candidate_ids: list[int],
+    vector_store: FaissStore,
+    top_n: int,
+    *,
+    lambda_: float = 0.7,
+) -> list[int]:
+    """Maximal Marginal Relevance selection over the candidate pool.
+
+    Picks the candidate most similar to the query first, then iteratively picks
+    the candidate that maximizes
+        lambda_ * sim(c, q) - (1 - lambda_) * max_{s in selected} sim(c, s)
+    so the final set is relevant but doesn't pile up near-duplicates.
+    Vectors come from the FAISS store and are already L2-normalized, so dot
+    products are cosine similarities.
+    """
+    if len(candidate_ids) <= top_n:
+        return list(candidate_ids)
+
+    kept_ids, cand_vecs = vector_store.get_vectors(candidate_ids)
+    if not kept_ids:
+        return list(candidate_ids)[:top_n]
+
+    q = query_vec.astype(np.float32, copy=False)
+    query_sims = cand_vecs @ q  # shape (N,)
+
+    selected_local: list[int] = []
+    available: list[int] = list(range(len(kept_ids)))
+
+    first = int(np.argmax(query_sims))
+    selected_local.append(first)
+    available.remove(first)
+
+    while len(selected_local) < top_n and available:
+        sel_vecs = cand_vecs[selected_local]                    # (k, D)
+        avail_vecs = cand_vecs[available]                       # (M, D)
+        existing = avail_vecs @ sel_vecs.T                      # (M, k)
+        max_existing = existing.max(axis=1)                     # (M,)
+        avail_query = query_sims[available]                     # (M,)
+        mmr = lambda_ * avail_query - (1.0 - lambda_) * max_existing
+        best_local = int(np.argmax(mmr))
+        chosen = available[best_local]
+        selected_local.append(chosen)
+        available.pop(best_local)
+
+    return [kept_ids[i] for i in selected_local]
 
 
 def _doc_matches(doc: DocRecord, filters: dict) -> bool:

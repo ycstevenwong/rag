@@ -37,7 +37,7 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "80"))
 
 TOP_K_VECTOR = int(os.getenv("TOP_K_VECTOR", "20"))
 TOP_K_BM25 = int(os.getenv("TOP_K_BM25", "20"))
-TOP_N_FINAL = int(os.getenv("TOP_N_FINAL", "6"))
+TOP_N_FINAL = int(os.getenv("TOP_N_FINAL", "10"))
 CONTEXT_TOKEN_BUDGET = int(os.getenv("CONTEXT_TOKEN_BUDGET", "3000"))
 
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")

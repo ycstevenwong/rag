@@ -233,6 +233,25 @@ class FaissStore:
                 return c
         return None
 
+    def get_vectors(self, chunk_ids: list[int]) -> tuple[list[int], np.ndarray]:
+        """Return (kept_ids, stacked_vectors) for the given chunk_ids.
+        Vectors are L2-normalized (FAISS IndexFlatIP stored them that way).
+        Missing chunk_ids are silently dropped."""
+        if self._index is None or self._index.ntotal == 0 or not chunk_ids:
+            return [], np.zeros((0, self.dim or 0), dtype=np.float32)
+        position_by_id = {c.id: i for i, c in enumerate(self.chunks)}
+        kept: list[int] = []
+        positions: list[int] = []
+        for cid in chunk_ids:
+            pos = position_by_id.get(cid)
+            if pos is not None and pos < self._index.ntotal:
+                kept.append(cid)
+                positions.append(pos)
+        if not positions:
+            return [], np.zeros((0, self.dim or 0), dtype=np.float32)
+        vecs = np.stack([self._index.reconstruct(p) for p in positions]).astype(np.float32)
+        return kept, vecs
+
 
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
