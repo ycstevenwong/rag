@@ -18,6 +18,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any
@@ -253,13 +254,31 @@ class FaissStore:
         return kept, vecs
 
 
+def _replace_with_retry(tmp: str, dest: Path, attempts: int = 5) -> None:
+    """os.replace is atomic on POSIX but on Windows can raise PermissionError
+    transiently when antivirus or another handle is mid-flight on the dest.
+    Retry with linear backoff (200ms, 400ms, 600ms, 800ms) before giving up."""
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError as exc:
+            last = exc
+            if i == attempts - 1:
+                break
+            time.sleep(0.2 * (i + 1))
+    assert last is not None
+    raise last
+
+
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -272,7 +291,7 @@ def _atomic_write_bytes(path: Path, writer) -> None:
     os.close(fd)
     try:
         writer(Path(tmp))
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
