@@ -574,12 +574,7 @@
     const file = fileInput.files[0];
     if (!file) return;
 
-    const missing = [];
-    if (!uploadSourceTypeEl.value) missing.push("source type");
-    if (!uploadAppCodeEl.value) missing.push("app code");
-    if (!uploadVersionEl.value.trim()) missing.push("version");
-    if (!uploadFunctionalityEl.value.trim()) missing.push("functionality");
-    if (!isAdmin && !uploadRequesterEl.value.trim()) missing.push("your name");
+    const missing = getMissingUploadFields();
     if (missing.length) {
       uploadStatus.classList.add("error");
       uploadStatus.textContent = `Please fill in: ${missing.join(", ")}.`;
