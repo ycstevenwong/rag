@@ -150,6 +150,22 @@
     }
   }
 
+  function _toggleAppCodeForManual(formEl) {
+    const st = formEl.querySelector("[data-field='source_type']");
+    const ac = formEl.querySelector("[data-field='app_code']");
+    if (!st || !ac) return;
+    const isManual = st.value === "manual";
+    ac.style.display = isManual ? "none" : "";
+    if (isManual) ac.value = "";
+  }
+
+  pendingListEl.addEventListener("change", (e) => {
+    if (e.target.matches("[data-field='source_type']")) {
+      const block = e.target.closest(".pending-approve");
+      if (block) _toggleAppCodeForManual(block);
+    }
+  });
+
   pendingListEl.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -165,7 +181,9 @@
       return;
     }
     if (action === "approve") {
-      li.querySelector(".pending-approve").hidden = false;
+      const approveBlock = li.querySelector(".pending-approve");
+      approveBlock.hidden = false;
+      _toggleAppCodeForManual(approveBlock);
       btn.hidden = true;
       return;
     }
@@ -285,13 +303,25 @@
 
   function getMissingUploadFields() {
     const missing = [];
+    const isManual = uploadSourceTypeEl.value === "manual";
     if (!uploadSourceTypeEl.value) missing.push("source type");
-    if (!uploadAppCodeEl.value) missing.push("app code");
+    if (!isManual && !uploadAppCodeEl.value) missing.push("app code");
     if (!uploadVersionEl.value.trim()) missing.push("version");
     if (!uploadFunctionalityEl.value.trim()) missing.push("functionality");
     if (!isAdmin && !uploadRequesterEl.value.trim()) missing.push("your name");
     return missing;
   }
+
+  function updateUploadAppCodeVisibility() {
+    const isManual = uploadSourceTypeEl.value === "manual";
+    uploadAppCodeEl.style.display = isManual ? "none" : "";
+    if (isManual) uploadAppCodeEl.value = "";
+  }
+  uploadSourceTypeEl.addEventListener("change", () => {
+    updateUploadAppCodeVisibility();
+    updateFileDropState();
+  });
+  updateUploadAppCodeVisibility();
 
   function updateFileDropState() {
     const missing = getMissingUploadFields();
@@ -473,6 +503,13 @@
     return editRow;
   }
 
+  docsTbodyEl.addEventListener("change", (e) => {
+    if (e.target.matches("[data-field='source_type']")) {
+      const row = e.target.closest("tr.edit-row");
+      if (row) _toggleAppCodeForManual(row);
+    }
+  });
+
   docsTbodyEl.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -489,7 +526,9 @@
         next.remove();
         return;
       }
-      tr.parentNode.insertBefore(buildEditRow(doc), tr.nextSibling);
+      const editRow = buildEditRow(doc);
+      tr.parentNode.insertBefore(editRow, tr.nextSibling);
+      _toggleAppCodeForManual(editRow);
       return;
     }
     if (action === "cancel-edit") {

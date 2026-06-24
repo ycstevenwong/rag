@@ -123,6 +123,11 @@ def create_app() -> Flask:
         version = (request.form.get("version") or "").strip()
         functionality = (request.form.get("functionality") or "").strip()
         requester = (request.form.get("requester") or "").strip()
+        # Manuals do not carry an app_code — they're scoped by APP_VERSION_MAP
+        # at query time via (app_code, functionality), so the doc itself stays
+        # universal.
+        if source_type == "manual":
+            app_code = ""
         f.save(dest)
 
         # Anonymous uploads go to the pending queue; admin uploads ingest now.
@@ -213,6 +218,9 @@ def create_app() -> Flask:
                 doc.tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
             else:
                 doc.tags = [t for t in raw_tags if isinstance(t, str) and t.strip()]
+        # Manuals can't carry an app_code regardless of what was sent.
+        if doc.source_type == "manual":
+            doc.app_code = ""
         vector_store.persist()
         return jsonify({"updated": doc_id})
 
@@ -279,6 +287,8 @@ def create_app() -> Flask:
         version = (payload.get("version") or item.version or "").strip()
         functionality = (payload.get("functionality") or item.functionality or "").strip()
         app_code = (payload.get("app_code") or item.app_code or "").strip()
+        if source_type == "manual":
+            app_code = ""
         raw_tags = payload.get("tags")
         if raw_tags is None:
             tags = list(item.tags or [])
