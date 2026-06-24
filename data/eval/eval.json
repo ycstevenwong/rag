@@ -1,0 +1,56 @@
+{
+  "_about": "RAG eval set. Each item is a (question, expected) pair. Run with: python scripts/run_eval.py",
+  "_schema": {
+    "id": "unique short identifier",
+    "question": "the user's natural-language question to send to the retriever",
+    "filters": "optional dict — same shape as the chat /chat 'filters' payload (source_type, app_code, tags). Leave out for no filter.",
+    "expected_doc_ids": "list of DocRecord ids that count as a hit (any match in top-N = hit)",
+    "expected_filenames": "list of filename substrings (case-insensitive); any retrieved chunk whose file contains one = hit",
+    "expected_keywords": "list of phrases that should appear in the retrieved chunk text (case-insensitive); any match = hit",
+    "notes": "free-form context for the human author"
+  },
+  "_tips": [
+    "Use 'expected_filenames' for cases where you know which doc should be cited but don't have the doc_id.",
+    "Use 'expected_keywords' for cases where the exact source doesn't matter but the answer text should mention specific terms.",
+    "All three expected_* fields are ORed — any retrieved chunk in the top-N satisfying any of them counts as a hit.",
+    "Aim for ~30 questions covering different types: factoid (identifier lookups), procedural ('how do I…'), conceptual ('why does X work this way'), comparative ('what changed between v1 and v2')."
+  ],
+  "items": [
+    {
+      "id": "q01-procedural-billing",
+      "question": "How do I refund a payment?",
+      "filters": {"app_code": "billing-svc"},
+      "expected_doc_ids": [],
+      "expected_filenames": ["refund"],
+      "expected_keywords": ["refund", "REVERSE-TRANS"],
+      "notes": "Procedural query about billing-svc refund flow. Replace this example with a real one from your corpus."
+    },
+    {
+      "id": "q02-identifier-lookup",
+      "question": "What is error code AUTH-410?",
+      "filters": {"app_code": "auth-svc"},
+      "expected_doc_ids": [],
+      "expected_filenames": [],
+      "expected_keywords": ["AUTH-410", "token reuse"],
+      "notes": "Identifier lookup — BM25 should win this strongly. Good signal that the keyword side of fusion is healthy."
+    },
+    {
+      "id": "q03-conceptual-auth",
+      "question": "Why does the system use OAuth tokens?",
+      "filters": {"app_code": "auth-svc", "source_type": "manual"},
+      "expected_doc_ids": [],
+      "expected_filenames": ["oauth"],
+      "expected_keywords": ["OAuth", "token", "authentication"],
+      "notes": "Conceptual / how-does-X-work query. HyDE-style approaches help here."
+    },
+    {
+      "id": "q04-comparative-versions",
+      "question": "What's different between v1 and v2 of token issuance?",
+      "filters": {"app_code": "auth-svc"},
+      "expected_doc_ids": [],
+      "expected_filenames": ["token"],
+      "expected_keywords": ["token", "v2", "v1"],
+      "notes": "Cross-version question. With APP_VERSION_MAP, only v2 manuals may come back unless v1 is also in the active policy."
+    }
+  ]
+}
