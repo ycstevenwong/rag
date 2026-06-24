@@ -45,6 +45,12 @@ class IngestPipeline:
         managed: bool = False,
     ) -> Iterator[dict]:
         """Yield progress events. Final event is {"type": "done", "result": {...}}."""
+        # Manuals are scoped by APP_VERSION_MAP at query time, so the doc
+        # itself must stay universal across apps. Strip any incoming app_code
+        # for manuals so every ingest path (UI direct, UI pending approval,
+        # bulk script, future API) is consistent.
+        if source_type == "manual":
+            app_code = ""
         sha = _sha256(file_path)
         existing_file = self.vector_store.find_file_by_sha(sha)
 
