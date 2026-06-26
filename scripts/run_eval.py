@@ -23,6 +23,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+# Force UTF-8 on stdout/stderr so the ✓/✗/★ glyphs don't crash on Windows
+# terminals whose default codec (cp1252) can't encode them. errors="replace"
+# substitutes "?" for any character the terminal can't actually render, so
+# the script keeps running even on non-UTF-8 consoles.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
