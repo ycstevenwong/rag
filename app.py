@@ -50,6 +50,48 @@ def _admin_enabled() -> bool:
     return bool(cfg.ADMIN_USERNAME and cfg.ADMIN_PASSWORD_HASH)
 
 
+def _free_disk_gb() -> float:
+    try:
+        return shutil.disk_usage(str(cfg.DATA_DIR)).free / (1024 ** 3)
+    except OSError:
+        return float("inf")
+
+
+def _pending_total_bytes() -> int:
+    total = 0
+    try:
+        for p in cfg.PENDING_DIR.iterdir():
+            if p.is_file():
+                try:
+                    total += p.stat().st_size
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return total
+
+
+def _cleanup_orphan_uploads() -> int:
+    """Remove leftover files in data/uploads/ older than UPLOAD_ORPHAN_MAX_AGE.
+    These come from ingests that crashed before the move/unlink step. Returns
+    the number of files removed."""
+    cutoff = time.time() - cfg.UPLOAD_ORPHAN_MAX_AGE
+    removed = 0
+    try:
+        for f in cfg.UPLOAD_DIR.iterdir():
+            if not f.is_file():
+                continue
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+                    removed += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return removed
+
+
 def create_app() -> Flask:
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
@@ -112,6 +154,17 @@ def create_app() -> Flask:
         ext = Path(f.filename).suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
             return jsonify({"error": f"Unsupported extension {ext}"}), 400
+
+        # Pre-flight storage checks. Return 507 (Insufficient Storage) with a
+        # clean error rather than letting the write raise Errno 28 mid-stream.
+        if _free_disk_gb() < cfg.MIN_FREE_DISK_GB:
+            return jsonify({"error": "Server storage is low. Try again later."}), 507
+        if not _is_admin():
+            estimated_size = request.content_length or 0
+            if _pending_total_bytes() + estimated_size > cfg.PENDING_MAX_MB * 1024 * 1024:
+                return jsonify({
+                    "error": "Approval queue is full. Admin must process pending uploads before more can be accepted.",
+                }), 507
 
         tmp_name = f"{uuid.uuid4().hex}{ext}"
         dest = cfg.UPLOAD_DIR / tmp_name
@@ -370,6 +423,10 @@ def create_app() -> Flask:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    removed = _cleanup_orphan_uploads()
+    if removed:
+        print(f"[startup] cleaned {removed} orphan upload file(s) from {cfg.UPLOAD_DIR}", flush=True)
 
     return app
 

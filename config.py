@@ -47,6 +47,14 @@ ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 SESSION_LIFETIME_HOURS = int(os.getenv("SESSION_LIFETIME_HOURS", "8"))
 
+# Storage safety. Uploads are rejected with HTTP 507 when free disk drops
+# below MIN_FREE_DISK_GB or when the pending queue would exceed
+# PENDING_MAX_MB after this upload. Orphan files in data/uploads older than
+# UPLOAD_ORPHAN_MAX_AGE seconds are cleared on app startup.
+MIN_FREE_DISK_GB = float(os.getenv("MIN_FREE_DISK_GB", "1.0"))
+PENDING_MAX_MB = int(os.getenv("PENDING_MAX_MB", "1024"))
+UPLOAD_ORPHAN_MAX_AGE = int(os.getenv("UPLOAD_ORPHAN_MAX_AGE", "3600"))
+
 # Edit this list to add or remove the app codes shown in the upload form
 # and filter sidebar. Empty string is always accepted as "unspecified".
 APP_CODES = [
