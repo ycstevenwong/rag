@@ -275,6 +275,114 @@ In the sidebar **Filter retrieval**:
 - `App code = auth-svc` + `Source type = Spec` → only auth-svc's specs.
 - Leave filters blank → all corpus content is fair game.
 
+## Eval set and retrieval metrics
+
+`scripts/run_eval.py` runs a JSON-defined set of test questions through the
+retriever and reports `Recall@N`, `MRR`, and `median hit rank` — the
+measurement layer for every retrieval-quality experiment (chunking,
+embeddings, fusion weights, MMR tuning, etc.). Without numbers from a
+fixed eval set, every change is a guess.
+
+### Eval set format
+
+`data/eval/eval.json` ships as a template with an embedded `_schema` block
+and four example entries. Replace the placeholders with ~20–30 real
+questions from your corpus. Each entry:
+
+```json
+{
+  "id": "q07",
+  "question": "How do I refund a payment?",
+  "filters": {"app_code": "billing-svc", "source_type": "manual"},
+  "expected_doc_ids": [],
+  "expected_filenames": ["refund"],
+  "expected_keywords": ["refund", "REVERSE-TRANS"],
+  "notes": "Free-form context for the human author."
+}
+```
+
+The three `expected_*` fields are **ORed** — the first retrieved chunk in
+the top-N that satisfies any one of them sets the hit rank for that
+question. Pick whichever level is convenient to author:
+
+| Field | When to use | Match semantics |
+|---|---|---|
+| `expected_doc_ids` | You know the exact `DocRecord.doc_id` | Exact match |
+| `expected_filenames` | You know which file should be cited | Case-insensitive substring |
+| `expected_keywords` | Any chunk mentioning the phrase counts | Case-insensitive substring in chunk text |
+
+Loose `expected_keywords` can produce false positives (any chunk with the
+word "refund" counts as a hit); use distinctive phrases or identifiers
+where possible.
+
+### Run
+
+```bash
+# Stop Flask first (the eval script loads the FAISS / BM25 store
+# in-process; concurrent persists from a running app risk corruption).
+
+# Baseline summary — uses data/eval/eval.json, top-N=10
+python scripts/run_eval.py
+
+# Per-question rank, not just failures
+python scripts/run_eval.py --verbose
+
+# Full per-question dump: top-N retrieved with filename, score, and snippet,
+# with a star next to the rows that satisfied any expected_* field.
+python scripts/run_eval.py --detailed
+
+# Tighter recall threshold
+python scripts/run_eval.py --top-n 5
+
+# Different eval file
+python scripts/run_eval.py path/to/other-eval.json
+```
+
+### Sample output
+
+```
+============================================================
+Results
+============================================================
+  Questions:       30
+  Hits @ 10        24
+  Recall @ 10      80.0%
+  MRR:             0.61
+  Median hit rank: 2
+
+============================================================
+Failures (6)
+============================================================
+  [q03-procedural-refund] How do I refund a payment?
+     1. token-overview.pdf
+     2. login-manual.pdf
+     3. password-reset.pdf
+```
+
+Exit codes: `0` on `Recall@N ≥ 50%`, `2` otherwise (useful for CI gating).
+
+### What the metrics mean
+
+| Metric | Question it answers |
+|---|---|
+| **Hits @ N** | "Did the right chunk show up at all in the top-N?" Binary per question. |
+| **Recall @ N** | Same as Hits, as a percentage of total questions. |
+| **MRR** | "When the right chunk *is* found, how high is it?" Penalizes burying the answer at rank 10. |
+| **Median hit rank** | "Typical position of the right chunk when it's found." Complementary to MRR. |
+
+Track **Recall @ N** as the headline number; **MRR** as the secondary check
+that ranking didn't regress. A healthy change moves both in the same
+direction.
+
+### Workflow
+
+1. Author 20–30 real questions in `data/eval/eval.json`.
+2. Stop Flask, run `python scripts/run_eval.py`, record the baseline numbers.
+3. Make one change at a time (chunk size, MMR lambda, model swap, etc.).
+4. Re-run the script — accept the change if metrics go up, revert if they
+   go down.
+5. Use `--detailed` to diagnose specific weak hits and failures.
+
 ## UI uploads vs bulk ingest
 
 The UI's upload form is a deliberate scratch space:
@@ -310,6 +418,10 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 - `rag/citations.py` — context block builder with filename / page / heading
   locators.
 - `scripts/ingest_corpus.py` — bulk-ingest CLI; three layout modes; idempotent.
+- `scripts/run_eval.py` — runs a JSON eval set through the retriever; reports
+  Recall@N / MRR / median hit rank; `--detailed` dumps per-question chunks.
+- `data/eval/eval.json` — eval set template (4 placeholder entries); replace
+  with real questions to establish a measurable baseline.
 
 ## Configuration reference
 
