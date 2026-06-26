@@ -38,11 +38,22 @@ DEFAULT_EVAL_PATH = ROOT / "data" / "eval" / "eval.json"
 
 
 @dataclass
+class RetrievedRow:
+    rank: int
+    filename: str
+    score: float
+    matched: bool
+    snippet: str
+
+
+@dataclass
 class EvalResult:
     item_id: str
     question: str
     hit_rank: int | None
     top_filenames: list[str]
+    rows: list[RetrievedRow]
+    item: dict
 
 
 def _chunk_satisfies(retrieved, file, item) -> bool:
@@ -71,19 +82,30 @@ def run_one(item, retriever, vector_store, top_n) -> EvalResult:
 
     hit_rank = None
     top_filenames: list[str] = []
+    rows: list[RetrievedRow] = []
     for rank, r in enumerate(results, start=1):
         file = vector_store.get_file(r.chunk.file_id)
         fname = file.filename if file else "(unknown)"
         if rank <= 5:
             top_filenames.append(fname)
-        if hit_rank is None and _chunk_satisfies(r, file, item):
+        matched = _chunk_satisfies(r, file, item)
+        if hit_rank is None and matched:
             hit_rank = rank
+        snippet = (r.chunk.text or "").strip().replace("\n", " ")
+        if len(snippet) > 140:
+            snippet = snippet[:140] + "…"
+        rows.append(RetrievedRow(
+            rank=rank, filename=fname, score=float(r.score),
+            matched=matched, snippet=snippet,
+        ))
 
     return EvalResult(
         item_id=item.get("id", "?"),
         question=item["question"],
         hit_rank=hit_rank,
         top_filenames=top_filenames,
+        rows=rows,
+        item=item,
     )
 
 
@@ -100,6 +122,10 @@ def main() -> int:
     parser.add_argument(
         "--verbose", action="store_true",
         help="Print every question's result, not just failures.",
+    )
+    parser.add_argument(
+        "--detailed", action="store_true",
+        help="For every question, dump the top-N retrieved chunks with filename, score, and snippet.",
     )
     args = parser.parse_args()
 
@@ -131,12 +157,33 @@ def main() -> int:
             r = run_one(item, retriever, vector_store, args.top_n)
         except Exception as exc:
             print(f"  [{i}/{len(items)}] {item.get('id', '?')}  ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
-            r = EvalResult(item_id=item.get("id", "?"), question=item["question"], hit_rank=None, top_filenames=[])
+            r = EvalResult(
+                item_id=item.get("id", "?"), question=item["question"],
+                hit_rank=None, top_filenames=[], rows=[], item=item,
+            )
         results.append(r)
         marker = f"✓ rank {r.hit_rank}" if r.hit_rank else "✗ MISS"
         line = f"  [{i:>3}/{len(items)}] {r.item_id:<30} {marker}"
-        if args.verbose or r.hit_rank is None:
+        if args.verbose or args.detailed or r.hit_rank is None:
             print(line)
+
+        if args.detailed:
+            filters = r.item.get("filters") or {}
+            expected_bits = []
+            if r.item.get("expected_doc_ids"): expected_bits.append(f"doc_ids={r.item['expected_doc_ids']}")
+            if r.item.get("expected_filenames"): expected_bits.append(f"filenames={r.item['expected_filenames']}")
+            if r.item.get("expected_keywords"): expected_bits.append(f"keywords={r.item['expected_keywords']}")
+            print(f"        Question: {r.question}")
+            if filters:
+                print(f"        Filters:  {json.dumps(filters)}")
+            if expected_bits:
+                print(f"        Expected: {'; '.join(expected_bits)}")
+            print(f"        Retrieved (top {len(r.rows)}):")
+            for row in r.rows:
+                mark = "★" if row.matched else " "
+                print(f"          {mark} {row.rank:>2}. [{row.score:6.4f}] {row.filename}")
+                print(f"                 {row.snippet}")
+            print()
 
     hits = [r for r in results if r.hit_rank is not None]
     n_total = len(results)
