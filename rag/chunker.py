@@ -42,6 +42,7 @@ def chunk_blocks(
     buffer_tokens = 0
     current_page: Any = None
     current_slide: Any = None
+    current_heading_path: Any = None
 
     def flush() -> None:
         nonlocal buffer, buffer_tokens
@@ -54,8 +55,11 @@ def chunk_blocks(
         block_tokens = count_tokens(block.text)
         block_page = block.meta.get("page")
         block_slide = block.meta.get("slide_num")
+        block_heading_path = block.meta.get("heading_path")
 
-        # Respect page / slide boundaries.
+        # Respect page / slide / section boundaries. A change in heading_path
+        # means we've moved to a new section — flush before continuing so each
+        # chunk stays within one section.
         crosses_page = (
             block_page is not None
             and current_page is not None
@@ -66,7 +70,12 @@ def chunk_blocks(
             and current_slide is not None
             and block_slide != current_slide
         )
-        if crosses_page or crosses_slide:
+        crosses_section = (
+            block_heading_path is not None
+            and current_heading_path is not None
+            and block_heading_path != current_heading_path
+        )
+        if crosses_page or crosses_slide or crosses_section:
             flush()
 
         if buffer_tokens + block_tokens > target_tokens and buffer:
@@ -79,6 +88,8 @@ def chunk_blocks(
                 ]))
             current_page = block_page if block_page is not None else current_page
             current_slide = block_slide if block_slide is not None else current_slide
+            if block_heading_path is not None:
+                current_heading_path = block_heading_path
             continue
 
         buffer.append(block)
@@ -87,6 +98,8 @@ def chunk_blocks(
             current_page = block_page
         if block_slide is not None:
             current_slide = block_slide
+        if block_heading_path is not None:
+            current_heading_path = block_heading_path
 
     flush()
 

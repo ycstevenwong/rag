@@ -46,26 +46,142 @@ def parse_text(path: Path) -> list[Block]:
 
 
 def parse_pdf(path: Path) -> list[Block]:
+    """Section-aware PDF parser.
+
+    Walks each page's structured text (PyMuPDF's "dict" output) so we can read
+    font sizes per block. Blocks whose max font size is meaningfully larger
+    than the document's body font are treated as headings; we maintain a
+    heading_stack so every emitted paragraph carries the section context it
+    belongs to (same shape as parse_docx). The chunker then keeps each chunk
+    within one section via heading_path boundary tracking.
+
+    Falls back to legacy paragraph-mode parsing if the structural extraction
+    can't determine a body font (very small / image-only / odd PDFs).
+    """
     import fitz  # PyMuPDF
 
-    pages_text: list[str] = []
     doc = fitz.open(str(path))
     try:
+        # First pass — plain text per page, used to identify repeating
+        # headers/footers we should drop from the structured pass.
+        pages_text: list[str] = []
         for page in doc:
             try:
                 pages_text.append(page.get_text("text") or "")
             except Exception:
                 pages_text.append("")
+
+        top_repeats, bot_repeats = _find_repeating_lines(pages_text, min_frac=0.5)
+        repeating = top_repeats | bot_repeats
+
+        def is_repeating(text: str) -> bool:
+            if not repeating:
+                return False
+            return re.sub(r"\d+", "#", text.strip()) in repeating
+
+        # Estimate the document's body font size. If we can't, fall back.
+        body_size = _estimate_body_font_size(doc)
+        if body_size is None:
+            return _parse_pdf_legacy(pages_text)
+
+        heading_threshold = body_size * 1.15  # >= 15% larger than body = heading
+        heading_stack: list[str] = []
+        blocks: list[Block] = []
+
+        for page_num, page in enumerate(doc, start=1):
+            try:
+                page_dict = page.get_text("dict")
+            except Exception:
+                continue
+            for blk in page_dict.get("blocks", []):
+                if blk.get("type", 0) != 0:  # 0 = text block
+                    continue
+                texts: list[str] = []
+                sizes: list[float] = []
+                for line in blk.get("lines", []):
+                    spans = line.get("spans", [])
+                    line_text = "".join(s.get("text", "") for s in spans).strip()
+                    if line_text:
+                        texts.append(line_text)
+                    for s in spans:
+                        sz = s.get("size")
+                        if sz:
+                            sizes.append(sz)
+                text = " ".join(texts).strip()
+                if not text or is_repeating(text):
+                    continue
+                max_size = max(sizes) if sizes else body_size
+                # Heading heuristic: visibly larger than body AND short.
+                is_heading = max_size >= heading_threshold and len(text) <= 200
+                if is_heading:
+                    level = _heading_level_from_size(max_size, body_size)
+                    heading_stack = heading_stack[: max(0, level - 1)]
+                    heading_stack.append(text)
+                    blocks.append(Block(
+                        text=text,
+                        kind="heading",
+                        meta={
+                            "page": page_num,
+                            "heading_path": " > ".join(heading_stack),
+                            "level": level,
+                        },
+                    ))
+                else:
+                    blocks.append(Block(
+                        text=text,
+                        kind="paragraph",
+                        meta={
+                            "page": page_num,
+                            "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                        },
+                    ))
+        return blocks
     finally:
         doc.close()
 
-    pages_text = _strip_repeating_lines(pages_text, min_frac=0.5)
 
+def _parse_pdf_legacy(pages_text: list[str]) -> list[Block]:
+    """Paragraph-mode fallback (the pre-section-aware behavior)."""
+    pages_text = _strip_repeating_lines(pages_text, min_frac=0.5)
     blocks: list[Block] = []
     for page_num, text in enumerate(pages_text, start=1):
         for para in _split_paragraphs(text):
             blocks.append(Block(text=para, kind="paragraph", meta={"page": page_num}))
     return blocks
+
+
+def _estimate_body_font_size(doc) -> float | None:
+    """Most-common font size weighted by character count. Returns None if
+    no usable text/font info is available."""
+    sizes: Counter[float] = Counter()
+    for page in doc:
+        try:
+            page_dict = page.get_text("dict")
+        except Exception:
+            continue
+        for blk in page_dict.get("blocks", []):
+            if blk.get("type", 0) != 0:
+                continue
+            for line in blk.get("lines", []):
+                for span in line.get("spans", []):
+                    sz = span.get("size")
+                    txt = (span.get("text") or "").strip()
+                    if sz and txt:
+                        # Round to nearest 0.5pt so near-identical sizes group.
+                        sizes[round(sz * 2) / 2] += len(txt)
+    if not sizes:
+        return None
+    return sizes.most_common(1)[0][0]
+
+
+def _heading_level_from_size(size: float, body_size: float) -> int:
+    """Map font-size ratio to a heading level (1 = biggest)."""
+    ratio = size / body_size if body_size else 1.0
+    if ratio >= 2.0:
+        return 1
+    if ratio >= 1.5:
+        return 2
+    return 3
 
 
 def parse_docx(path: Path) -> list[Block]:
@@ -225,15 +341,16 @@ def _split_paragraphs(text: str) -> list[str]:
     return parts
 
 
-def _strip_repeating_lines(pages_text: list[str], min_frac: float = 0.5) -> list[str]:
-    """Remove running headers/footers that repeat at the top or bottom of pages.
+def _find_repeating_lines(
+    pages_text: list[str], min_frac: float = 0.5
+) -> tuple[set[str], set[str]]:
+    """Identify digit-normalized header/footer lines that recur on most pages.
 
-    A line is treated as a header/footer if a digit-normalized version of it
-    appears among the first or last non-empty lines of at least `min_frac` of
-    the pages. Needs at least 3 pages to engage.
+    Returns (top_repeats, bot_repeats) — sets of digit-normalized strings.
+    Needs at least 3 pages to engage; returns (set(), set()) otherwise.
     """
     if len(pages_text) < 3:
-        return pages_text
+        return set(), set()
 
     def norm(line: str) -> str:
         return re.sub(r"\d+", "#", line.strip())
@@ -251,9 +368,19 @@ def _strip_repeating_lines(pages_text: list[str], min_frac: float = 0.5) -> list
     threshold = max(2, int(min_frac * len(pages_text)))
     top_repeats = {k for k, v in top_counts.items() if v >= threshold}
     bot_repeats = {k for k, v in bot_counts.items() if v >= threshold}
+    return top_repeats, bot_repeats
+
+
+def _strip_repeating_lines(pages_text: list[str], min_frac: float = 0.5) -> list[str]:
+    """Remove running headers/footers that repeat at the top or bottom of pages."""
+    top_repeats, bot_repeats = _find_repeating_lines(pages_text, min_frac)
     if not top_repeats and not bot_repeats:
         return pages_text
 
+    def norm(line: str) -> str:
+        return re.sub(r"\d+", "#", line.strip())
+
+    page_lines = [p.splitlines() for p in pages_text]
     cleaned: list[str] = []
     for lines in page_lines:
         i, j = 0, len(lines)
