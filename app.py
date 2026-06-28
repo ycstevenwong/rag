@@ -153,7 +153,18 @@ def create_app() -> Flask:
             return jsonify({"error": "Empty filename"}), 400
         ext = Path(f.filename).suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
-            return jsonify({"error": f"Unsupported extension {ext}"}), 400
+            hint = ""
+            if ext == ".doc":
+                hint = " Open the file in Word and save as .docx, then re-upload."
+            elif ext == ".rtf":
+                hint = " Convert to .docx or .txt first."
+            elif ext in (".xls", ".ppt"):
+                modern = ".xlsx" if ext == ".xls" else ".pptx"
+                hint = f" Open the file and save as {modern}, then re-upload."
+            supported = ", ".join(sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS))
+            return jsonify({
+                "error": f"Unsupported extension {ext}. Supported: {supported}.{hint}",
+            }), 400
 
         # Pre-flight storage checks. Return 507 (Insufficient Storage) with a
         # clean error rather than letting the write raise Errno 28 mid-stream.
