@@ -37,6 +37,19 @@ to exactly one app_code and isn't covered by APP_VERSION_MAP.
 Files that don't match the convention fall back to --source-type /
 --app-code / --version / --functionality.
 
+Auto-narrowing: if the target contains a 'manual/' or 'spec/' subdir
+matching the chosen mode, the script narrows to that subdir before
+walking. This means
+
+    python scripts/ingest_corpus.py data/corpus --by-filename
+
+walks only data/corpus/manual/ (not the whole corpus), and
+
+    python scripts/ingest_corpus.py data/corpus --by-app-path
+
+walks only data/corpus/spec/. Pointing directly at the subdir
+(`data/corpus/manual`) works the same way - no double-narrowing.
+
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
 WARNING: do NOT run this while `python app.py` is also running. Both
@@ -178,6 +191,16 @@ def main() -> int:
     args = parser.parse_args()
 
     target = Path(args.path).resolve()
+    # Auto-narrow when the corpus convention is recognized so the mode only
+    # walks its own subtree. Prevents `data/corpus --by-filename` from picking
+    # up spec/ files and tagging them as manuals, and the reverse for specs.
+    if target.is_dir():
+        if args.by_filename and (target / "manual").is_dir():
+            target = target / "manual"
+            print(f"--by-filename: narrowed target to {target}\n")
+        elif args.by_app_path and (target / "spec").is_dir():
+            target = target / "spec"
+            print(f"--by-app-path: narrowed target to {target}\n")
     if args.source_type is not None:
         default_source_type = args.source_type.strip().lower()
     elif args.by_filename:
