@@ -8,6 +8,8 @@ chunking or debugging why a particular doc parses weirdly.
 Usage:
     python scripts/inspect_pdf.py path/to/file.pdf
     python scripts/inspect_pdf.py path/to/file.pdf --max-headings 50
+    python scripts/inspect_pdf.py path/to/file.pdf --full
+    python scripts/inspect_pdf.py path/to/file.pdf --full -o report.txt
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ from rag.parsers import (  # noqa: E402
 )
 
 
-def inspect(pdf_path: Path, max_headings: int) -> int:
+def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
     import fitz  # PyMuPDF
 
     try:
@@ -93,8 +95,14 @@ def inspect(pdf_path: Path, max_headings: int) -> int:
                         if sz and txt:
                             size_dist[round(sz * 2) / 2] += len(txt)
 
-        print("Font size distribution (top 8, by character count):")
-        for size, count in size_dist.most_common(8):
+        dist_n = len(size_dist) if full else 8
+        dist_title = (
+            f"Font size distribution (all {len(size_dist)}, by character count):"
+            if full else
+            f"Font size distribution (top {min(8, len(size_dist))}, by character count):"
+        )
+        print(dist_title)
+        for size, count in size_dist.most_common(dist_n):
             tags = []
             if size == body_size:
                 tags.append("body")
@@ -119,6 +127,7 @@ def inspect(pdf_path: Path, max_headings: int) -> int:
         headings: list[tuple[int, int, float, str]] = []
         n_blocks = 0
         n_paragraphs = 0
+        per_page: dict[int, dict[str, int]] = {}
         repeating = top_repeats | bot_repeats
 
         def is_repeating(text: str) -> bool:
@@ -128,6 +137,7 @@ def inspect(pdf_path: Path, max_headings: int) -> int:
             return re.sub(r"\d+", "#", text.strip()) in repeating
 
         for page_num, page in enumerate(doc, start=1):
+            per_page.setdefault(page_num, {"blocks": 0, "headings": 0, "paragraphs": 0})
             try:
                 page_dict = page.get_text("dict")
             except Exception:
@@ -150,12 +160,15 @@ def inspect(pdf_path: Path, max_headings: int) -> int:
                 if not text or is_repeating(text):
                     continue
                 n_blocks += 1
+                per_page[page_num]["blocks"] += 1
                 max_size = max(sizes) if sizes else body_size
                 if max_size >= threshold and len(text) <= 200:
                     level = _heading_level_from_size(max_size, body_size)
                     headings.append((page_num, level, max_size, text))
+                    per_page[page_num]["headings"] += 1
                 else:
                     n_paragraphs += 1
+                    per_page[page_num]["paragraphs"] += 1
 
         # Summary.
         print(f"Block totals (after stripping repeating lines):")
@@ -169,13 +182,24 @@ def inspect(pdf_path: Path, max_headings: int) -> int:
             level_summary = ", ".join(f"H{l}={n}" for l, n in sorted(level_counts.items()))
             print(f"Heading levels: {level_summary}")
             print()
-            shown = min(len(headings), max_headings)
-            print(f"First {shown} headings:")
-            for page_num, level, size, text in headings[:shown]:
+            heading_cap = len(headings) if full else min(len(headings), max_headings)
+            label = "All headings:" if full else f"First {heading_cap} headings:"
+            print(label)
+            for page_num, level, size, text in headings[:heading_cap]:
                 snippet = text if len(text) <= 70 else text[:67] + "..."
                 print(f"  H{level} [page {page_num:>3}] {size:5.1f}pt  {snippet}")
-            if len(headings) > shown:
-                print(f"  ... {len(headings) - shown} more")
+            if not full and len(headings) > heading_cap:
+                print(f"  ... {len(headings) - heading_cap} more (use --full to print everything)")
+            print()
+
+            if full:
+                print(f"Per-page block counts ({n_pages} pages):")
+                for page_num in sorted(per_page):
+                    stats = per_page[page_num]
+                    print(
+                        f"  page {page_num:>3}: blocks={stats['blocks']:>4}  "
+                        f"headings={stats['headings']:>3}  paragraphs={stats['paragraphs']:>4}"
+                    )
         else:
             print("No headings detected. Section-aware chunking won't split this PDF.")
             print("Likely causes:")
@@ -193,7 +217,15 @@ def main() -> int:
     parser.add_argument("path", type=Path, help="Path to the PDF file")
     parser.add_argument(
         "--max-headings", type=int, default=30,
-        help="Maximum number of headings to print (default: 30)",
+        help="Maximum number of headings to print in default mode (default: 30). Ignored with --full.",
+    )
+    parser.add_argument(
+        "--full", action="store_true",
+        help="Print everything: all font sizes, all headings, per-page block counts.",
+    )
+    parser.add_argument(
+        "-o", "--output", type=Path, default=None,
+        help="Write the report to a UTF-8 text file instead of stdout.",
     )
     args = parser.parse_args()
 
@@ -205,7 +237,20 @@ def main() -> int:
         print(f"Not a PDF: {pdf_path}", file=sys.stderr)
         return 1
 
-    return inspect(pdf_path, max_headings=args.max_headings)
+    if args.output:
+        out_path = args.output.resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        original_stdout = sys.stdout
+        try:
+            with out_path.open("w", encoding="utf-8", errors="replace") as fp:
+                sys.stdout = fp
+                rc = inspect(pdf_path, max_headings=args.max_headings, full=args.full)
+        finally:
+            sys.stdout = original_stdout
+        print(f"Report written to {out_path}")
+        return rc
+
+    return inspect(pdf_path, max_headings=args.max_headings, full=args.full)
 
 
 if __name__ == "__main__":
