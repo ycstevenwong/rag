@@ -57,10 +57,17 @@ class BM25Store:
         return [(self.chunk_ids[i], float(scores[i])) for i in top_idx if scores[i] > 0]
 
     def persist(self) -> None:
+        from .vector_store import atomic_write_bytes
+
         with self._lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
             data = {"tokenized": self.tokenized, "chunk_ids": self.chunk_ids}
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            with tmp.open("wb") as f:
-                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            tmp.replace(self.path)
+
+            def _write(p: Path) -> None:
+                with p.open("wb") as f:
+                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+            # Routes through the same retry-aware os.replace as the FAISS /
+            # JSON files, so a transient Windows file lock on bm25.pkl no
+            # longer leaves the keyword index out of sync with the vector
+            # index.
+            atomic_write_bytes(self.path, _write)

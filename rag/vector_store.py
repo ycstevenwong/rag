@@ -272,7 +272,8 @@ def _replace_with_retry(tmp: str, dest: Path, attempts: int = 5) -> None:
     raise last
 
 
-def _atomic_write_text(path: Path, content: str) -> None:
+def atomic_write_text(path: Path, content: str) -> None:
+    """Write UTF-8 text to `path` atomically, with retry on Windows file locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
@@ -285,7 +286,10 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
-def _atomic_write_bytes(path: Path, writer) -> None:
+def atomic_write_bytes(path: Path, writer) -> None:
+    """Write binary content to `path` atomically. `writer(tmp_path)` does the
+    actual byte write to a temp file; this helper handles the atomic rename
+    with retry on Windows file locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     os.close(fd)
@@ -296,3 +300,9 @@ def _atomic_write_bytes(path: Path, writer) -> None:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+
+
+# Backwards-compatible private aliases (kept so existing internal callers in
+# this module keep working without churn).
+_atomic_write_text = atomic_write_text
+_atomic_write_bytes = atomic_write_bytes
