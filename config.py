@@ -83,6 +83,13 @@ DOCX_STOP_HEADINGS: list[str] = [
     # "Revision History",
 ]
 
+# Drop PDF text blocks whose max font size is >= this value (points). Useful
+# for excluding large-font document titles / page banners / section dividers
+# that look more like headers than body content. 0 (default) = no filtering.
+# Run scripts/inspect_pdf.py first to see your corpus's font distribution
+# before picking a threshold.
+PDF_MAX_FONT_SIZE = float(os.getenv("PDF_MAX_FONT_SIZE", "0"))
+
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
     # "auth-svc": {
     #     "login": "v2",

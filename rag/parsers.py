@@ -60,6 +60,10 @@ def parse_pdf(path: Path) -> list[Block]:
     """
     import fitz  # PyMuPDF
 
+    from . import config_facade as cfg
+
+    max_font = float(cfg.PDF_MAX_FONT_SIZE or 0)  # 0 = disabled
+
     doc = fitz.open(str(path))
     try:
         # First pass — plain text per page, used to identify repeating
@@ -111,6 +115,12 @@ def parse_pdf(path: Path) -> list[Block]:
                 if not text or is_repeating(text):
                     continue
                 max_size = max(sizes) if sizes else body_size
+                # Drop blocks whose largest span exceeds PDF_MAX_FONT_SIZE
+                # (when set). Useful for excluding document titles / page
+                # banners / large section dividers that look more like
+                # headers than body content.
+                if max_font and max_size >= max_font:
+                    continue
                 # Heading heuristic: visibly larger than body AND short.
                 is_heading = max_size >= heading_threshold and len(text) <= 200
                 if is_heading:
