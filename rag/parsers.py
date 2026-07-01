@@ -102,24 +102,14 @@ def parse_pdf(path: Path) -> list[Block]:
             return _parse_pdf_legacy(pages_text)
 
         heading_threshold = body_size * 1.15  # >= 15% larger than body = heading
-        # (level, text) tuples so a new level-N heading correctly removes every
-        # entry with level >= N — necessary for multiple level-5 field labels
-        # to become siblings instead of nesting under each other, and for a
-        # second Field Descriptions block to reset both slot 4 and slot 5.
-        heading_stack: list[tuple[int, str]] = []
-
-        def _stack_path() -> str:
-            return " > ".join(t for _, t in heading_stack) if heading_stack else ""
+        heading_stack: list[str] = []
         blocks: list[Block] = []
         # Buffer for consecutive same-page screen blocks so they merge into one.
         screen_buf: list[str] = []
         screen_buf_page: int | None = None
-        # Tracks the most recent screen so subsequent blocks can point back to
-        # it. Reset by major section boundaries (H1/H2/H3).
-        last_screen_page: int | None = None
 
         def _flush_screen() -> None:
-            nonlocal screen_buf, screen_buf_page, last_screen_page
+            nonlocal screen_buf, screen_buf_page
             if not screen_buf or screen_buf_page is None:
                 return
             joined = "\n".join(screen_buf)
@@ -128,10 +118,9 @@ def parse_pdf(path: Path) -> list[Block]:
                 kind="screen",
                 meta={
                     "page": screen_buf_page,
-                    "heading_path": _stack_path(),
+                    "heading_path": " > ".join(heading_stack) if heading_stack else "",
                 },
             ))
-            last_screen_page = screen_buf_page
             screen_buf = []
             screen_buf_page = None
 
@@ -145,106 +134,62 @@ def parse_pdf(path: Path) -> list[Block]:
             for blk in page_dict.get("blocks", []):
                 if blk.get("type", 0) != 0:  # 0 = text block
                     continue
-
-                # Process lines individually so a block containing a heading
-                # line followed by body lines (common on page transitions where
-                # PyMuPDF glues them together) still gets split cleanly.
-                para_lines: list[str] = []
-                para_max_size: float = 0.0
-
-                def _flush_paragraph() -> None:
-                    nonlocal para_lines, para_max_size, screen_buf
-                    if not para_lines:
-                        return
-                    ptext = " ".join(para_lines).strip()
-                    para_lines = []
-                    p_max = para_max_size
-                    para_max_size = 0.0
-                    if not ptext or is_repeating(ptext):
-                        return
-                    if max_font and p_max >= max_font:
-                        return
-                    if screen_buf:
-                        _flush_screen()
-                    meta = {
-                        "page": page_num,
-                        "heading_path": _stack_path(),
-                    }
-                    if last_screen_page is not None:
-                        meta["related_screen_page"] = last_screen_page
-                    blocks.append(Block(text=ptext, kind="paragraph", meta=meta))
-
+                texts: list[str] = []
+                sizes: list[float] = []
+                span_fonts: list[tuple[float, str]] = []
                 for line in blk.get("lines", []):
                     spans = line.get("spans", [])
                     line_text = "".join(s.get("text", "") for s in spans).strip()
-                    if not line_text or is_repeating(line_text):
-                        continue
-
-                    line_sizes: list[float] = []
-                    line_span_fonts: list[tuple[float, str]] = []
-                    line_bold = 0
-                    line_total = 0
+                    if line_text:
+                        texts.append(line_text)
                     for s in spans:
                         sz = s.get("size")
                         if sz:
-                            line_sizes.append(sz)
-                        line_span_fonts.append((sz or 0.0, s.get("font") or ""))
-                        span_text = s.get("text") or ""
-                        span_chars = len(span_text)
-                        line_total += span_chars
-                        if int(s.get("flags") or 0) & 16:
-                            line_bold += span_chars
-                    line_max_size = max(line_sizes) if line_sizes else body_size
+                            sizes.append(sz)
+                        span_fonts.append((sz or 0.0, s.get("font") or ""))
+                text = " ".join(texts).strip()
+                if not text or is_repeating(text):
+                    continue
+                max_size = max(sizes) if sizes else body_size
+                if max_font and max_size >= max_font:
+                    continue
 
-                    # Screen detection at line level. Consecutive same-page
-                    # screen lines still buffer into one Block(kind="screen").
-                    if _block_is_screen(line_span_fonts):
-                        _flush_paragraph()
-                        if screen_buf_page is not None and screen_buf_page != page_num:
-                            _flush_screen()
-                        screen_buf_page = page_num
-                        screen_buf.append(line_text)
-                        continue
-                    # Non-screen line — flush any pending screen first.
-                    if screen_buf:
+                # Screen detection: all spans in a configured screen font.
+                # Consecutive same-page screen blocks buffer into one Block.
+                if _block_is_screen(span_fonts):
+                    if screen_buf_page is not None and screen_buf_page != page_num:
                         _flush_screen()
+                    screen_buf_page = page_num
+                    screen_buf.append(text)
+                    continue
+                # Non-screen block — flush any pending screen first.
+                if screen_buf:
+                    _flush_screen()
 
-                    if max_font and line_max_size >= max_font:
-                        _flush_paragraph()
-                        continue
-
-                    line_is_bold = line_total > 0 and (line_bold / line_total) >= 0.5
-                    is_heading_by_size = line_max_size >= heading_threshold and len(line_text) <= 200
-                    is_heading_by_bold = line_is_bold and line_max_size >= body_size and len(line_text) <= 100
-                    is_heading = is_heading_by_size or is_heading_by_bold
-
-                    if is_heading:
-                        # Flush any accumulated body lines as their own
-                        # paragraph before emitting the heading.
-                        _flush_paragraph()
-                        level = _heading_level_from_size(line_max_size, body_size, line_is_bold)
-                        if level <= 3:
-                            last_screen_page = None
-                        # Drop every stack entry at this level or deeper; a
-                        # level-N heading is a peer to prior level-N entries,
-                        # not their child.
-                        heading_stack = [(l, t) for l, t in heading_stack if l < level]
-                        heading_stack.append((level, line_text))
-                        meta = {
+                # Heading heuristic: visibly larger than body AND short.
+                is_heading = max_size >= heading_threshold and len(text) <= 200
+                if is_heading:
+                    level = _heading_level_from_size(max_size, body_size)
+                    heading_stack = heading_stack[: max(0, level - 1)]
+                    heading_stack.append(text)
+                    blocks.append(Block(
+                        text=text,
+                        kind="heading",
+                        meta={
                             "page": page_num,
-                            "heading_path": _stack_path(),
+                            "heading_path": " > ".join(heading_stack),
                             "level": level,
-                        }
-                        if last_screen_page is not None:
-                            meta["related_screen_page"] = last_screen_page
-                        blocks.append(Block(text=line_text, kind="heading", meta=meta))
-                    else:
-                        para_lines.append(line_text)
-                        if line_max_size > para_max_size:
-                            para_max_size = line_max_size
-
-                # End of block — flush any accumulated paragraph.
-                _flush_paragraph()
+                        },
+                    ))
+                else:
+                    blocks.append(Block(
+                        text=text,
+                        kind="paragraph",
+                        meta={
+                            "page": page_num,
+                            "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                        },
+                    ))
         _flush_screen()  # emit any trailing screen block
         return blocks
     finally:
@@ -285,26 +230,14 @@ def _estimate_body_font_size(doc) -> float | None:
     return sizes.most_common(1)[0][0]
 
 
-def _heading_level_from_size(size: float, body_size: float, is_bold: bool = False) -> int:
-    """Map font-size ratio (plus bold flag) to a heading level (1 = biggest).
-
-    Levels 1-3 are size-based. Levels 4-5 are the bold-only regime for headings
-    that are at or near body size (e.g., 'Field Descriptions' at 11pt on 10pt
-    body, or field-name labels at 10pt bold on 10pt body). Keeping them at
-    distinct levels lets each field name nest under its parent 'Field
-    Descriptions' block instead of appearing as its sibling.
-    """
+def _heading_level_from_size(size: float, body_size: float) -> int:
+    """Map font-size ratio to a heading level (1 = biggest)."""
     ratio = size / body_size if body_size else 1.0
     if ratio >= 2.0:
         return 1
     if ratio >= 1.5:
         return 2
-    if ratio >= 1.15:
-        return 3
-    # Bold-only regime.
-    if is_bold and ratio >= 1.05:
-        return 4
-    return 5
+    return 3
 
 
 def parse_docx(path: Path) -> list[Block]:
