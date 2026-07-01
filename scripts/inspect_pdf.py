@@ -82,6 +82,8 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
         size_dist: Counter[float] = Counter()
         font_dist: Counter[str] = Counter()
         font_props: dict[str, dict[str, bool]] = {}
+        font_size_dist: dict[str, Counter[float]] = {}
+        font_samples: dict[str, str] = {}
         total_chars = 0
         bold_chars = 0
         mono_chars = 0
@@ -101,11 +103,12 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
                         if not (sz and txt):
                             continue
                         n_chars = len(txt)
-                        size_dist[round(sz * 2) / 2] += n_chars
+                        rounded_sz = round(sz * 2) / 2
+                        size_dist[rounded_sz] += n_chars
                         font_name = span.get("font") or "(unknown)"
                         flags = int(span.get("flags") or 0)
                         font_dist[font_name] += n_chars
-                        # Record properties on first sighting of this font.
+                        # Record properties + first sample on first sighting.
                         if font_name not in font_props:
                             font_props[font_name] = {
                                 "bold": bool(flags & 16),
@@ -113,6 +116,9 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
                                 "serif": bool(flags & 4),
                                 "monospaced": bool(flags & 8),
                             }
+                            font_samples[font_name] = txt[:80]
+                            font_size_dist[font_name] = Counter()
+                        font_size_dist[font_name][rounded_sz] += n_chars
                         if flags & 16:
                             bold_chars += n_chars
                         if flags & 8:
@@ -139,23 +145,61 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
             print(f"  {size:5.1f} pt : {count:>9,} chars{tag_str}")
         print()
 
-        # Font-family distribution.
+        # Font-family analysis: per-family sizes, role classification, sample.
+        def _classify(name: str, sizes: Counter, props: dict) -> str:
+            if props.get("monospaced"):
+                return "code / monospaced"
+            total = sum(sizes.values())
+            if total == 0:
+                return "unknown"
+            primary = sizes.most_common(1)[0][0]
+            body_share = sum(c for s, c in sizes.items() if s == body_size) / total
+            heading_share = sum(c for s, c in sizes.items() if s >= threshold) / total
+            if body_share >= 0.7:
+                return "body font"
+            if heading_share >= 0.7:
+                return "heading font"
+            if props.get("bold") and primary >= body_size * 1.05:
+                return "heading font (bold-emphasized)"
+            if primary < body_size:
+                return "small text (footnotes / captions?)"
+            return "mixed / other"
+
         family_n = len(font_dist) if full else 8
         family_title = (
-            f"Font family distribution (all {len(font_dist)}, by character count):"
+            f"Font family analysis (all {len(font_dist)}):"
             if full else
-            f"Font family distribution (top {min(8, len(font_dist))}, by character count):"
+            f"Font family analysis (top {min(8, len(font_dist))} by character count):"
         )
         print(family_title)
         for name, count in font_dist.most_common(family_n):
             props = font_props.get(name, {})
-            tags = [k for k in ("bold", "italic", "monospaced", "serif") if props.get(k)]
-            tag_str = f"  ({', '.join(tags)})" if tags else ""
-            display_name = name if len(name) <= 44 else name[:41] + "..."
-            print(f"  {display_name:<44}: {count:>9,} chars{tag_str}")
+            sizes = font_size_dist.get(name, Counter())
+            primary_size = sizes.most_common(1)[0][0] if sizes else 0.0
+            all_sizes_sorted = sorted(sizes.keys())
+            min_sz = all_sizes_sorted[0] if all_sizes_sorted else 0.0
+            max_sz = all_sizes_sorted[-1] if all_sizes_sorted else 0.0
+            size_range = (
+                f"{min_sz:.1f}–{max_sz:.1f} pt"
+                if min_sz != max_sz
+                else f"{primary_size:.1f} pt"
+            )
+            flags = [k for k in ("bold", "italic", "monospaced", "serif") if props.get(k)]
+            flag_str = ", ".join(flags) if flags else "none"
+            role = _classify(name, sizes, props)
+            sample = font_samples.get(name, "").replace("\n", " ").strip()
+            if len(sample) > 60:
+                sample = sample[:57] + "..."
+            print(f"  {name}")
+            print(f"    chars:  {count:>9,}")
+            print(f"    sizes:  {size_range}  (primary {primary_size:.1f} pt)")
+            print(f"    flags:  {flag_str}")
+            print(f"    role:   {role}")
+            print(f'    sample: "{sample}"')
+            print()
         if not full and len(font_dist) > family_n:
-            print(f"  ... {len(font_dist) - family_n} more (use --full to print everything)")
-        print()
+            print(f"  ... {len(font_dist) - family_n} more (use --full to print all)")
+            print()
 
         # Aggregate style-flag usage.
         if total_chars > 0:
