@@ -90,6 +90,15 @@ DOCX_STOP_HEADINGS: list[str] = [
 # before picking a threshold.
 PDF_MAX_FONT_SIZE = float(os.getenv("PDF_MAX_FONT_SIZE", "0"))
 
+# Comma-separated font-family substrings (case-insensitive) used to identify
+# PDF text blocks that render a screen mockup (e.g., CICS terminal screens
+# rendered in Monotony-Regular). Matching blocks are:
+#   * merged with consecutive matching blocks on the same page into one Block
+#   * kept intact through chunking (never split even if oversized)
+#   * flagged in the resulting chunk's meta as contains_screen=True
+# Empty string = disabled.
+PDF_SCREEN_FONTS = os.getenv("PDF_SCREEN_FONTS", "")
+
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
     # "auth-svc": {
     #     "login": "v2",

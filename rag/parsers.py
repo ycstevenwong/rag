@@ -63,6 +63,19 @@ def parse_pdf(path: Path) -> list[Block]:
     from . import config_facade as cfg
 
     max_font = float(cfg.PDF_MAX_FONT_SIZE or 0)  # 0 = disabled
+    screen_fonts = [
+        f.strip().lower() for f in (cfg.PDF_SCREEN_FONTS or "").split(",") if f.strip()
+    ]
+
+    def _block_is_screen(sizes_spans_text: list[tuple[float, str]]) -> bool:
+        """True if every span in the block matches a configured screen font."""
+        if not screen_fonts or not sizes_spans_text:
+            return False
+        for _, font_name in sizes_spans_text:
+            fn = (font_name or "").lower()
+            if not any(sf in fn for sf in screen_fonts):
+                return False
+        return True
 
     doc = fitz.open(str(path))
     try:
@@ -91,8 +104,29 @@ def parse_pdf(path: Path) -> list[Block]:
         heading_threshold = body_size * 1.15  # >= 15% larger than body = heading
         heading_stack: list[str] = []
         blocks: list[Block] = []
+        # Buffer for consecutive same-page screen blocks so they merge into one.
+        screen_buf: list[str] = []
+        screen_buf_page: int | None = None
+
+        def _flush_screen() -> None:
+            nonlocal screen_buf, screen_buf_page
+            if not screen_buf or screen_buf_page is None:
+                return
+            joined = "\n".join(screen_buf)
+            blocks.append(Block(
+                text=joined,
+                kind="screen",
+                meta={
+                    "page": screen_buf_page,
+                    "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                },
+            ))
+            screen_buf = []
+            screen_buf_page = None
 
         for page_num, page in enumerate(doc, start=1):
+            if screen_buf_page is not None and screen_buf_page != page_num:
+                _flush_screen()
             try:
                 page_dict = page.get_text("dict")
             except Exception:
@@ -102,6 +136,7 @@ def parse_pdf(path: Path) -> list[Block]:
                     continue
                 texts: list[str] = []
                 sizes: list[float] = []
+                span_fonts: list[tuple[float, str]] = []
                 for line in blk.get("lines", []):
                     spans = line.get("spans", [])
                     line_text = "".join(s.get("text", "") for s in spans).strip()
@@ -111,16 +146,26 @@ def parse_pdf(path: Path) -> list[Block]:
                         sz = s.get("size")
                         if sz:
                             sizes.append(sz)
+                        span_fonts.append((sz or 0.0, s.get("font") or ""))
                 text = " ".join(texts).strip()
                 if not text or is_repeating(text):
                     continue
                 max_size = max(sizes) if sizes else body_size
-                # Drop blocks whose largest span exceeds PDF_MAX_FONT_SIZE
-                # (when set). Useful for excluding document titles / page
-                # banners / large section dividers that look more like
-                # headers than body content.
                 if max_font and max_size >= max_font:
                     continue
+
+                # Screen detection: all spans in a configured screen font.
+                # Consecutive same-page screen blocks buffer into one Block.
+                if _block_is_screen(span_fonts):
+                    if screen_buf_page is not None and screen_buf_page != page_num:
+                        _flush_screen()
+                    screen_buf_page = page_num
+                    screen_buf.append(text)
+                    continue
+                # Non-screen block — flush any pending screen first.
+                if screen_buf:
+                    _flush_screen()
+
                 # Heading heuristic: visibly larger than body AND short.
                 is_heading = max_size >= heading_threshold and len(text) <= 200
                 if is_heading:
@@ -145,6 +190,7 @@ def parse_pdf(path: Path) -> list[Block]:
                             "heading_path": " > ".join(heading_stack) if heading_stack else "",
                         },
                     ))
+        _flush_screen()  # emit any trailing screen block
         return blocks
     finally:
         doc.close()

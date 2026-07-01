@@ -82,10 +82,16 @@ def chunk_blocks(
             flush()
 
         if block_tokens > target_tokens:
-            for piece in _split_long_text(block.text, target_tokens):
-                chunks.append(_blocks_to_chunk([
-                    Block(text=piece, kind=block.kind, meta=block.meta)
-                ]))
+            if block.kind == "screen":
+                # Screen mockups (e.g., CICS terminal captures) must stay
+                # intact — splitting mid-screen destroys column alignment
+                # and semantic meaning.
+                chunks.append(_blocks_to_chunk([block]))
+            else:
+                for piece in _split_long_text(block.text, target_tokens):
+                    chunks.append(_blocks_to_chunk([
+                        Block(text=piece, kind=block.kind, meta=block.meta)
+                    ]))
             current_page = block_page if block_page is not None else current_page
             current_slide = block_slide if block_slide is not None else current_slide
             if block_heading_path is not None:
@@ -124,6 +130,8 @@ def _blocks_to_chunk(buf: list[Block]) -> Chunk:
     headings = [b.meta.get("heading_path") for b in buf if b.meta.get("heading_path")]
     if headings:
         meta["heading_path"] = headings[-1]
+    if any(b.kind == "screen" for b in buf):
+        meta["contains_screen"] = True
     sheets = sorted({b.meta["sheet"] for b in buf if "sheet" in b.meta})
     if sheets:
         meta["sheets"] = sheets
