@@ -137,6 +137,8 @@ def parse_pdf(path: Path) -> list[Block]:
                 texts: list[str] = []
                 sizes: list[float] = []
                 span_fonts: list[tuple[float, str]] = []
+                bold_chars = 0
+                total_chars = 0
                 for line in blk.get("lines", []):
                     spans = line.get("spans", [])
                     line_text = "".join(s.get("text", "") for s in spans).strip()
@@ -147,6 +149,11 @@ def parse_pdf(path: Path) -> list[Block]:
                         if sz:
                             sizes.append(sz)
                         span_fonts.append((sz or 0.0, s.get("font") or ""))
+                        span_text = s.get("text") or ""
+                        span_chars = len(span_text)
+                        total_chars += span_chars
+                        if int(s.get("flags") or 0) & 16:
+                            bold_chars += span_chars
                 text = " ".join(texts).strip()
                 if not text or is_repeating(text):
                     continue
@@ -166,10 +173,17 @@ def parse_pdf(path: Path) -> list[Block]:
                 if screen_buf:
                     _flush_screen()
 
-                # Heading heuristic: visibly larger than body AND short.
-                is_heading = max_size >= heading_threshold and len(text) <= 200
+                is_bold = total_chars > 0 and (bold_chars / total_chars) >= 0.5
+                # Heading heuristic:
+                #   - size-based: visibly larger than body, ≤ 200 chars
+                #   - bold-based: majority bold, at least body size, ≤ 100 chars
+                #     (catches "Field Descriptions"-style structural markers at
+                #     11pt bold and field-name labels at 10pt bold)
+                is_heading_by_size = max_size >= heading_threshold and len(text) <= 200
+                is_heading_by_bold = is_bold and max_size >= body_size and len(text) <= 100
+                is_heading = is_heading_by_size or is_heading_by_bold
                 if is_heading:
-                    level = _heading_level_from_size(max_size, body_size)
+                    level = _heading_level_from_size(max_size, body_size, is_bold)
                     heading_stack = heading_stack[: max(0, level - 1)]
                     heading_stack.append(text)
                     blocks.append(Block(
@@ -230,14 +244,26 @@ def _estimate_body_font_size(doc) -> float | None:
     return sizes.most_common(1)[0][0]
 
 
-def _heading_level_from_size(size: float, body_size: float) -> int:
-    """Map font-size ratio to a heading level (1 = biggest)."""
+def _heading_level_from_size(size: float, body_size: float, is_bold: bool = False) -> int:
+    """Map font-size ratio (plus bold flag) to a heading level (1 = biggest).
+
+    Levels 1-3 are size-based. Levels 4-5 are the bold-only regime for headings
+    that are at or near body size (e.g., 'Field Descriptions' at 11pt on 10pt
+    body, or field-name labels at 10pt bold on 10pt body). Keeping them at
+    distinct levels lets each field name nest under its parent 'Field
+    Descriptions' block instead of appearing as its sibling.
+    """
     ratio = size / body_size if body_size else 1.0
     if ratio >= 2.0:
         return 1
     if ratio >= 1.5:
         return 2
-    return 3
+    if ratio >= 1.15:
+        return 3
+    # Bold-only regime.
+    if is_bold and ratio >= 1.05:
+        return 4
+    return 5
 
 
 def parse_docx(path: Path) -> list[Block]:
