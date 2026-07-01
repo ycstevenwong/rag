@@ -132,6 +132,9 @@ def _blocks_to_chunk(buf: list[Block]) -> Chunk:
         meta["heading_path"] = headings[-1]
     if any(b.kind == "screen" for b in buf):
         meta["contains_screen"] = True
+    screen_refs = [b.meta.get("related_screen_page") for b in buf if b.meta.get("related_screen_page") is not None]
+    if screen_refs:
+        meta["related_screen_page"] = screen_refs[-1]
     sheets = sorted({b.meta["sheet"] for b in buf if "sheet" in b.meta})
     if sheets:
         meta["sheets"] = sheets

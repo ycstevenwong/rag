@@ -99,6 +99,13 @@ PDF_MAX_FONT_SIZE = float(os.getenv("PDF_MAX_FONT_SIZE", "0"))
 # Empty string = disabled.
 PDF_SCREEN_FONTS = os.getenv("PDF_SCREEN_FONTS", "")
 
+# Comma-separated substrings (case-insensitive) that identify a Field
+# Descriptions-style subsection label in a PDF (e.g., "Field Descriptions",
+# "Input Fields"). Matching short lines are treated as level-4 headings and
+# tagged with related_screen_page pointing to the most recent screen block.
+# Empty = disabled.
+PDF_FIELD_DESC_LABELS = os.getenv("PDF_FIELD_DESC_LABELS", "")
+
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
     # "auth-svc": {
     #     "login": "v2",

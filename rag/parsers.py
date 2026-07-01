@@ -66,6 +66,9 @@ def parse_pdf(path: Path) -> list[Block]:
     screen_fonts = [
         f.strip().lower() for f in (cfg.PDF_SCREEN_FONTS or "").split(",") if f.strip()
     ]
+    field_desc_labels = [
+        l.strip().lower() for l in (cfg.PDF_FIELD_DESC_LABELS or "").split(",") if l.strip()
+    ]
 
     def _block_is_screen(sizes_spans_text: list[tuple[float, str]]) -> bool:
         """True if every span in the block matches a configured screen font."""
@@ -76,6 +79,13 @@ def parse_pdf(path: Path) -> list[Block]:
             if not any(sf in fn for sf in screen_fonts):
                 return False
         return True
+
+    def _matches_field_desc(text: str) -> bool:
+        """True if the block text matches a configured Field Descriptions label."""
+        if not field_desc_labels:
+            return False
+        lower = text.strip().lower()
+        return any(label in lower for label in field_desc_labels)
 
     doc = fitz.open(str(path))
     try:
@@ -107,9 +117,13 @@ def parse_pdf(path: Path) -> list[Block]:
         # Buffer for consecutive same-page screen blocks so they merge into one.
         screen_buf: list[str] = []
         screen_buf_page: int | None = None
+        # Track the most recent screen so Field Descriptions and their
+        # subsequent content can point back to it. Reset by real (level ≤ 3)
+        # headings.
+        last_screen_page: int | None = None
 
         def _flush_screen() -> None:
-            nonlocal screen_buf, screen_buf_page
+            nonlocal screen_buf, screen_buf_page, last_screen_page
             if not screen_buf or screen_buf_page is None:
                 return
             joined = "\n".join(screen_buf)
@@ -121,6 +135,7 @@ def parse_pdf(path: Path) -> list[Block]:
                     "heading_path": " > ".join(heading_stack) if heading_stack else "",
                 },
             ))
+            last_screen_page = screen_buf_page
             screen_buf = []
             screen_buf_page = None
 
@@ -168,28 +183,41 @@ def parse_pdf(path: Path) -> list[Block]:
 
                 # Heading heuristic: visibly larger than body AND short.
                 is_heading = max_size >= heading_threshold and len(text) <= 200
+                # OR the block text matches a configured Field Descriptions
+                # label — treated as a level-4 sub-heading so its contents nest
+                # under whatever section is above it.
+                is_field_desc = _matches_field_desc(text) and len(text) <= 100
+                if is_field_desc and not is_heading:
+                    is_heading = True
+                    forced_level = 4
+                else:
+                    forced_level = None
+
                 if is_heading:
-                    level = _heading_level_from_size(max_size, body_size)
+                    level = forced_level or _heading_level_from_size(max_size, body_size)
+                    # A major heading (level ≤ 3) resets the screen scope.
+                    # Level-4 Field Descriptions inherits the current tag so
+                    # it stays anchored to the screen it describes.
+                    if level <= 3:
+                        last_screen_page = None
                     heading_stack = heading_stack[: max(0, level - 1)]
                     heading_stack.append(text)
-                    blocks.append(Block(
-                        text=text,
-                        kind="heading",
-                        meta={
-                            "page": page_num,
-                            "heading_path": " > ".join(heading_stack),
-                            "level": level,
-                        },
-                    ))
+                    meta = {
+                        "page": page_num,
+                        "heading_path": " > ".join(heading_stack),
+                        "level": level,
+                    }
+                    if last_screen_page is not None:
+                        meta["related_screen_page"] = last_screen_page
+                    blocks.append(Block(text=text, kind="heading", meta=meta))
                 else:
-                    blocks.append(Block(
-                        text=text,
-                        kind="paragraph",
-                        meta={
-                            "page": page_num,
-                            "heading_path": " > ".join(heading_stack) if heading_stack else "",
-                        },
-                    ))
+                    meta = {
+                        "page": page_num,
+                        "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                    }
+                    if last_screen_page is not None:
+                        meta["related_screen_page"] = last_screen_page
+                    blocks.append(Block(text=text, kind="paragraph", meta=meta))
         _flush_screen()  # emit any trailing screen block
         return blocks
     finally:
