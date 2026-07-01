@@ -78,8 +78,14 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
         print("Parser mode:       structural (section-aware)")
         print()
 
-        # Font-size distribution.
+        # Font-size AND font-family / flag distribution.
         size_dist: Counter[float] = Counter()
+        font_dist: Counter[str] = Counter()
+        font_props: dict[str, dict[str, bool]] = {}
+        total_chars = 0
+        bold_chars = 0
+        mono_chars = 0
+        italic_chars = 0
         for page in doc:
             try:
                 page_dict = page.get_text("dict")
@@ -92,9 +98,30 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
                     for span in line.get("spans", []):
                         sz = span.get("size")
                         txt = (span.get("text") or "").strip()
-                        if sz and txt:
-                            size_dist[round(sz * 2) / 2] += len(txt)
+                        if not (sz and txt):
+                            continue
+                        n_chars = len(txt)
+                        size_dist[round(sz * 2) / 2] += n_chars
+                        font_name = span.get("font") or "(unknown)"
+                        flags = int(span.get("flags") or 0)
+                        font_dist[font_name] += n_chars
+                        # Record properties on first sighting of this font.
+                        if font_name not in font_props:
+                            font_props[font_name] = {
+                                "bold": bool(flags & 16),
+                                "italic": bool(flags & 2),
+                                "serif": bool(flags & 4),
+                                "monospaced": bool(flags & 8),
+                            }
+                        if flags & 16:
+                            bold_chars += n_chars
+                        if flags & 8:
+                            mono_chars += n_chars
+                        if flags & 2:
+                            italic_chars += n_chars
+                        total_chars += n_chars
 
+        # Font-size distribution.
         dist_n = len(size_dist) if full else 8
         dist_title = (
             f"Font size distribution (all {len(size_dist)}, by character count):"
@@ -111,6 +138,32 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
             tag_str = f"  ({', '.join(tags)})" if tags else ""
             print(f"  {size:5.1f} pt : {count:>9,} chars{tag_str}")
         print()
+
+        # Font-family distribution.
+        family_n = len(font_dist) if full else 8
+        family_title = (
+            f"Font family distribution (all {len(font_dist)}, by character count):"
+            if full else
+            f"Font family distribution (top {min(8, len(font_dist))}, by character count):"
+        )
+        print(family_title)
+        for name, count in font_dist.most_common(family_n):
+            props = font_props.get(name, {})
+            tags = [k for k in ("bold", "italic", "monospaced", "serif") if props.get(k)]
+            tag_str = f"  ({', '.join(tags)})" if tags else ""
+            display_name = name if len(name) <= 44 else name[:41] + "..."
+            print(f"  {display_name:<44}: {count:>9,} chars{tag_str}")
+        if not full and len(font_dist) > family_n:
+            print(f"  ... {len(font_dist) - family_n} more (use --full to print everything)")
+        print()
+
+        # Aggregate style-flag usage.
+        if total_chars > 0:
+            print("Style-flag usage (as fraction of total text):")
+            for label, chars in (("bold", bold_chars), ("monospaced", mono_chars), ("italic", italic_chars)):
+                pct = chars / total_chars * 100
+                print(f"  {label:<12}: {chars:>9,} chars  ({pct:5.1f}%)")
+            print()
 
         # Repeating headers/footers.
         if top_repeats or bot_repeats:
