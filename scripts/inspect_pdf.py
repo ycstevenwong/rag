@@ -83,12 +83,16 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
         font_dist: Counter[str] = Counter()
         font_props: dict[str, dict[str, bool]] = {}
         font_size_dist: dict[str, Counter[float]] = {}
-        font_samples: dict[str, str] = {}
+        # One sample per page per font, up to a cap. Each sample = (page, size, text).
+        font_samples: dict[str, list[tuple[int, float, str]]] = {}
+        font_pages: dict[str, set[int]] = {}
+        # Bump this to change how many per-page samples we retain.
+        MAX_SAMPLES_PER_FONT = 20
         total_chars = 0
         bold_chars = 0
         mono_chars = 0
         italic_chars = 0
-        for page in doc:
+        for page_num, page in enumerate(doc, start=1):
             try:
                 page_dict = page.get_text("dict")
             except Exception:
@@ -108,7 +112,6 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
                         font_name = span.get("font") or "(unknown)"
                         flags = int(span.get("flags") or 0)
                         font_dist[font_name] += n_chars
-                        # Record properties + first sample on first sighting.
                         if font_name not in font_props:
                             font_props[font_name] = {
                                 "bold": bool(flags & 16),
@@ -116,9 +119,18 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
                                 "serif": bool(flags & 4),
                                 "monospaced": bool(flags & 8),
                             }
-                            font_samples[font_name] = txt[:80]
+                            font_samples[font_name] = []
+                            font_pages[font_name] = set()
                             font_size_dist[font_name] = Counter()
                         font_size_dist[font_name][rounded_sz] += n_chars
+                        font_pages[font_name].add(page_num)
+                        # Sample capture: first sighting per page, up to cap.
+                        if (
+                            len(font_samples[font_name]) < MAX_SAMPLES_PER_FONT
+                            and page_num not in {s[0] for s in font_samples[font_name]}
+                        ):
+                            snippet = txt if len(txt) <= 140 else txt[:137] + "..."
+                            font_samples[font_name].append((page_num, sz, snippet))
                         if flags & 16:
                             bold_chars += n_chars
                         if flags & 8:
@@ -165,7 +177,27 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
                 return "small text (footnotes / captions?)"
             return "mixed / other"
 
+        def _format_pages(pages: set[int], max_ranges: int = 6) -> str:
+            if not pages:
+                return "(none)"
+            sorted_pages = sorted(pages)
+            ranges: list[str] = []
+            start = prev = sorted_pages[0]
+            for p in sorted_pages[1:]:
+                if p == prev + 1:
+                    prev = p
+                    continue
+                ranges.append(str(start) if start == prev else f"{start}-{prev}")
+                start = prev = p
+            ranges.append(str(start) if start == prev else f"{start}-{prev}")
+            if len(ranges) <= max_ranges:
+                return ", ".join(ranges) + f"  ({len(pages)} page{'s' if len(pages) != 1 else ''})"
+            shown = ", ".join(ranges[:max_ranges])
+            return f"{shown}, ...  ({len(pages)} pages total)"
+
         family_n = len(font_dist) if full else 8
+        # Default sample count: 3 per font; --full shows all we collected (up to 20).
+        sample_n = MAX_SAMPLES_PER_FONT if full else 3
         family_title = (
             f"Font family analysis (all {len(font_dist)}):"
             if full else
@@ -187,15 +219,19 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
             flags = [k for k in ("bold", "italic", "monospaced", "serif") if props.get(k)]
             flag_str = ", ".join(flags) if flags else "none"
             role = _classify(name, sizes, props)
-            sample = font_samples.get(name, "").replace("\n", " ").strip()
-            if len(sample) > 60:
-                sample = sample[:57] + "..."
+            pages_str = _format_pages(font_pages.get(name, set()))
+            samples = font_samples.get(name, [])[:sample_n]
+            total_samples = len(font_samples.get(name, []))
+
             print(f"  {name}")
-            print(f"    chars:  {count:>9,}")
-            print(f"    sizes:  {size_range}  (primary {primary_size:.1f} pt)")
-            print(f"    flags:  {flag_str}")
-            print(f"    role:   {role}")
-            print(f'    sample: "{sample}"')
+            print(f"    chars:   {count:>9,}")
+            print(f"    sizes:   {size_range}  (primary {primary_size:.1f} pt)")
+            print(f"    flags:   {flag_str}")
+            print(f"    role:    {role}")
+            print(f"    pages:   {pages_str}")
+            print(f"    samples ({len(samples)} of {total_samples} collected):")
+            for page, sz, text in samples:
+                print(f"      [page {page:>3}, {sz:5.1f} pt] {text!r}")
             print()
         if not full and len(font_dist) > family_n:
             print(f"  ... {len(font_dist) - family_n} more (use --full to print all)")
