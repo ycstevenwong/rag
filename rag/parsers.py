@@ -102,7 +102,14 @@ def parse_pdf(path: Path) -> list[Block]:
             return _parse_pdf_legacy(pages_text)
 
         heading_threshold = body_size * 1.15  # >= 15% larger than body = heading
-        heading_stack: list[str] = []
+        # (level, text) tuples so a new level-N heading correctly removes every
+        # entry with level >= N — necessary for multiple level-5 field labels
+        # to become siblings instead of nesting under each other, and for a
+        # second Field Descriptions block to reset both slot 4 and slot 5.
+        heading_stack: list[tuple[int, str]] = []
+
+        def _stack_path() -> str:
+            return " > ".join(t for _, t in heading_stack) if heading_stack else ""
         blocks: list[Block] = []
         # Buffer for consecutive same-page screen blocks so they merge into one.
         screen_buf: list[str] = []
@@ -121,7 +128,7 @@ def parse_pdf(path: Path) -> list[Block]:
                 kind="screen",
                 meta={
                     "page": screen_buf_page,
-                    "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                    "heading_path": _stack_path(),
                 },
             ))
             last_screen_page = screen_buf_page
@@ -161,7 +168,7 @@ def parse_pdf(path: Path) -> list[Block]:
                         _flush_screen()
                     meta = {
                         "page": page_num,
-                        "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                        "heading_path": _stack_path(),
                     }
                     if last_screen_page is not None:
                         meta["related_screen_page"] = last_screen_page
@@ -218,11 +225,14 @@ def parse_pdf(path: Path) -> list[Block]:
                         level = _heading_level_from_size(line_max_size, body_size, line_is_bold)
                         if level <= 3:
                             last_screen_page = None
-                        heading_stack = heading_stack[: max(0, level - 1)]
-                        heading_stack.append(line_text)
+                        # Drop every stack entry at this level or deeper; a
+                        # level-N heading is a peer to prior level-N entries,
+                        # not their child.
+                        heading_stack = [(l, t) for l, t in heading_stack if l < level]
+                        heading_stack.append((level, line_text))
                         meta = {
                             "page": page_num,
-                            "heading_path": " > ".join(heading_stack),
+                            "heading_path": _stack_path(),
                             "level": level,
                         }
                         if last_screen_page is not None:
