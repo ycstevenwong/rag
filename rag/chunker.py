@@ -170,6 +170,13 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
     for i in range(1, len(chunks)):
         prev = chunks[i - 1]
         cur = chunks[i]
+        # Skip overlap when either side is a screen chunk. The tail of a
+        # screen mockup is a column-aligned fragment that carries no useful
+        # continuity, and prepending prose overlap onto a screen would break
+        # the screen's alignment. Screens are atomic units, no overlap.
+        if prev.meta.get("contains_screen") or cur.meta.get("contains_screen"):
+            out.append(cur)
+            continue
         tail = _tail_at_boundary(prev.text, overlap_tokens * 4)
         new_text = (tail + "\n\n" + cur.text).strip()
         out.append(Chunk(
