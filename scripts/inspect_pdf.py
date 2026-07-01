@@ -10,6 +10,8 @@ Usage:
     python scripts/inspect_pdf.py path/to/file.pdf --max-headings 50
     python scripts/inspect_pdf.py path/to/file.pdf --full
     python scripts/inspect_pdf.py path/to/file.pdf --full -o report.txt
+    python scripts/inspect_pdf.py path/to/file.pdf --find "Section 1"
+    python scripts/inspect_pdf.py path/to/file.pdf --find "REVERSE-TRANS" --full
 """
 from __future__ import annotations
 
@@ -36,7 +38,7 @@ from rag.parsers import (  # noqa: E402
 )
 
 
-def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
+def inspect(pdf_path: Path, max_headings: int, full: bool = False, find: str | None = None) -> int:
     import fitz  # PyMuPDF
 
     try:
@@ -49,6 +51,52 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False) -> int:
         n_pages = doc.page_count
         print(f"=== PDF Inspector: {pdf_path.name} ===")
         print(f"Pages: {n_pages}")
+
+        # Substring search — runs early so a user hunting for one specific
+        # phrase sees the matches before the rest of the report scrolls by.
+        if find:
+            print()
+            print(f"Search results for {find!r} (case-insensitive substring):")
+            find_lower = find.lower()
+            matches: list[tuple[int, float, str, int, str]] = []
+            for page_num, page in enumerate(doc, start=1):
+                try:
+                    page_dict = page.get_text("dict")
+                except Exception:
+                    continue
+                for blk in page_dict.get("blocks", []):
+                    if blk.get("type", 0) != 0:
+                        continue
+                    for line in blk.get("lines", []):
+                        for span in line.get("spans", []):
+                            text = span.get("text") or ""
+                            if find_lower in text.lower():
+                                matches.append((
+                                    page_num,
+                                    float(span.get("size") or 0),
+                                    span.get("font") or "(unknown)",
+                                    int(span.get("flags") or 0),
+                                    text,
+                                ))
+            if not matches:
+                print("  No matches found.")
+            else:
+                cap = len(matches) if full else min(len(matches), 30)
+                print(f"  Found {len(matches)} match{'es' if len(matches) != 1 else ''}"
+                      f"{'; showing first ' + str(cap) if cap < len(matches) else ''}:")
+                print()
+                for i, (page_num, sz, font_name, flags, text) in enumerate(matches[:cap], start=1):
+                    flag_tags = []
+                    if flags & 16: flag_tags.append("bold")
+                    if flags & 8:  flag_tags.append("mono")
+                    if flags & 2:  flag_tags.append("italic")
+                    flag_str = f"  [{', '.join(flag_tags)}]" if flag_tags else ""
+                    snippet = text if len(text) <= 140 else text[:137] + "..."
+                    print(f"  {i:>3}. page {page_num:>3}, {sz:5.1f} pt, {font_name}{flag_str}")
+                    print(f"       text: {snippet!r}")
+                if cap < len(matches):
+                    print(f"  ... {len(matches) - cap} more (use --full to show all)")
+            print()
 
         # First pass: plain text per page (drives repeating-line detection).
         pages_text: list[str] = []
@@ -360,6 +408,12 @@ def main() -> int:
         "-o", "--output", type=Path, default=None,
         help="Write the report to a UTF-8 text file instead of stdout.",
     )
+    parser.add_argument(
+        "-f", "--find", type=str, default=None,
+        help="Search for a substring in the PDF (case-insensitive) and list every "
+             "matching span's page, font, size, and flags. Combine with --full to show "
+             "all matches instead of the first 30.",
+    )
     args = parser.parse_args()
 
     pdf_path: Path = args.path.resolve()
@@ -377,13 +431,13 @@ def main() -> int:
         try:
             with out_path.open("w", encoding="utf-8", errors="replace") as fp:
                 sys.stdout = fp
-                rc = inspect(pdf_path, max_headings=args.max_headings, full=args.full)
+                rc = inspect(pdf_path, max_headings=args.max_headings, full=args.full, find=args.find)
         finally:
             sys.stdout = original_stdout
         print(f"Report written to {out_path}")
         return rc
 
-    return inspect(pdf_path, max_headings=args.max_headings, full=args.full)
+    return inspect(pdf_path, max_headings=args.max_headings, full=args.full, find=args.find)
 
 
 if __name__ == "__main__":
