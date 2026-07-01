@@ -107,9 +107,12 @@ def parse_pdf(path: Path) -> list[Block]:
         # Buffer for consecutive same-page screen blocks so they merge into one.
         screen_buf: list[str] = []
         screen_buf_page: int | None = None
+        # Tracks the most recent screen so subsequent blocks can point back to
+        # it. Reset by major section boundaries (H1/H2/H3).
+        last_screen_page: int | None = None
 
         def _flush_screen() -> None:
-            nonlocal screen_buf, screen_buf_page
+            nonlocal screen_buf, screen_buf_page, last_screen_page
             if not screen_buf or screen_buf_page is None:
                 return
             joined = "\n".join(screen_buf)
@@ -121,6 +124,7 @@ def parse_pdf(path: Path) -> list[Block]:
                     "heading_path": " > ".join(heading_stack) if heading_stack else "",
                 },
             ))
+            last_screen_page = screen_buf_page
             screen_buf = []
             screen_buf_page = None
 
@@ -184,26 +188,31 @@ def parse_pdf(path: Path) -> list[Block]:
                 is_heading = is_heading_by_size or is_heading_by_bold
                 if is_heading:
                     level = _heading_level_from_size(max_size, body_size, is_bold)
+                    # A major section heading (H1/H2/H3) starts a fresh scope —
+                    # nothing after it should still be attributed to the
+                    # previous screen. Level 4/5 (bold-only, near-body-size)
+                    # inherits the current screen tag so field-description
+                    # subsections stay anchored.
+                    if level <= 3:
+                        last_screen_page = None
                     heading_stack = heading_stack[: max(0, level - 1)]
                     heading_stack.append(text)
-                    blocks.append(Block(
-                        text=text,
-                        kind="heading",
-                        meta={
-                            "page": page_num,
-                            "heading_path": " > ".join(heading_stack),
-                            "level": level,
-                        },
-                    ))
+                    meta = {
+                        "page": page_num,
+                        "heading_path": " > ".join(heading_stack),
+                        "level": level,
+                    }
+                    if last_screen_page is not None:
+                        meta["related_screen_page"] = last_screen_page
+                    blocks.append(Block(text=text, kind="heading", meta=meta))
                 else:
-                    blocks.append(Block(
-                        text=text,
-                        kind="paragraph",
-                        meta={
-                            "page": page_num,
-                            "heading_path": " > ".join(heading_stack) if heading_stack else "",
-                        },
-                    ))
+                    meta = {
+                        "page": page_num,
+                        "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                    }
+                    if last_screen_page is not None:
+                        meta["related_screen_page"] = last_screen_page
+                    blocks.append(Block(text=text, kind="paragraph", meta=meta))
         _flush_screen()  # emit any trailing screen block
         return blocks
     finally:

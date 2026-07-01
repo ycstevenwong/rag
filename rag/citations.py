@@ -57,6 +57,8 @@ def _format_locator(filename: str, meta: dict[str, Any]) -> str:
         parts.append(slide_str)
     if meta.get("heading_path"):
         parts.append(meta["heading_path"])
+    if meta.get("related_screen_page"):
+        parts.append(f"screen on p.{meta['related_screen_page']}")
     if meta.get("sheets"):
         sheets = meta["sheets"]
         rng = meta.get("row_range")
