@@ -4,11 +4,33 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent
+
+
+def _load_env_file(path: Path) -> None:
+    """Minimal stand-in for python-dotenv: read KEY=value lines from .env.
+
+    Variables already set in the real environment win (same as load_dotenv's
+    default), so OpenShift / shell settings override the file.
+    """
+    if not path.exists():
+        return
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].rstrip()
+        os.environ.setdefault(key, value)
+
+
+_load_env_file(BASE_DIR / ".env")
+
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 INDEX_DIR = DATA_DIR / "index"
