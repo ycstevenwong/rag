@@ -11,3 +11,4 @@ data/sessions/*
 !data/sessions/.gitkeep
 .pytest_cache/
 .DS_Store
+CLAUDE.local.md
