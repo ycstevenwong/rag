@@ -68,3 +68,27 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
     results = retriever.search("What does error code XK-204 mean?", k_vector=4, k_bm25=4, top_n=2)
     assert results
     assert any("XK-204" in r.chunk.text for r in results)
+
+
+class _FakeVecStore:
+    def __init__(self, vecs: dict[int, np.ndarray]):
+        self._vecs = vecs
+
+    def get_vectors(self, ids):
+        kept = [i for i in ids if i in self._vecs]
+        return kept, np.array([self._vecs[i] for i in kept], dtype=np.float32)
+
+
+def test_mmr_keeps_bm25_only_hit():
+    """A chunk ranked #1 by fusion (via BM25) must survive MMR even when its
+    vector is far from the others — MMR relevance is the fused score, not
+    query cosine."""
+    from rag.retriever import _mmr_select
+
+    near = np.array([1.0, 0.0], dtype=np.float32)
+    far = np.array([0.0, 1.0], dtype=np.float32)
+    vecs = {0: far, 1: near, 2: near, 3: near}
+    fused = {0: 0.033, 1: 0.016, 2: 0.015, 3: 0.014}
+
+    picked = _mmr_select([0, 1, 2, 3], fused, _FakeVecStore(vecs), top_n=2)
+    assert picked[0] == 0

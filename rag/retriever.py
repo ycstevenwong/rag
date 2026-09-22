@@ -109,7 +109,7 @@ class HybridRetriever:
         pool_size = min(len(fused), max(top_n * MMR_POOL_MULTIPLIER, top_n))
         pool_ids = [cid for cid, _ in fused[:pool_size]]
         selected_ids = _mmr_select(
-            q_vec, pool_ids, self.vector_store, top_n, lambda_=MMR_LAMBDA
+            pool_ids, fused_score_by_id, self.vector_store, top_n, lambda_=MMR_LAMBDA
         )
 
         out: list[RetrievedChunk] = []
@@ -131,8 +131,8 @@ class HybridRetriever:
 
 
 def _mmr_select(
-    query_vec: np.ndarray,
     candidate_ids: list[int],
+    fused_scores: dict[int, float],
     vector_store: FaissStore,
     top_n: int,
     *,
@@ -140,12 +140,18 @@ def _mmr_select(
 ) -> list[int]:
     """Maximal Marginal Relevance selection over the candidate pool.
 
-    Picks the candidate most similar to the query first, then iteratively picks
-    the candidate that maximizes
-        lambda_ * sim(c, q) - (1 - lambda_) * max_{s in selected} sim(c, s)
+    Picks the most relevant candidate first, then iteratively picks the
+    candidate that maximizes
+        lambda_ * rel(c) - (1 - lambda_) * max_{s in selected} sim(c, s)
     so the final set is relevant but doesn't pile up near-duplicates.
-    Vectors come from the FAISS store and are already L2-normalized, so dot
-    products are cosine similarities.
+
+    rel(c) is the RRF fused score, min-max normalized over the pool to [0, 1]
+    so it sits on the same scale as cosine similarity. Using the fused score
+    (not query cosine) keeps BM25's vote: a chunk that only matches on an exact
+    identifier (e.g. an error code) has weak vector similarity and would
+    otherwise be pushed out here. sim(c, s) stays cosine — redundancy between
+    two chunks is a content question, which embeddings answer well. Vectors are
+    already L2-normalized, so dot products are cosine similarities.
     """
     if len(candidate_ids) <= top_n:
         return list(candidate_ids)
@@ -154,13 +160,14 @@ def _mmr_select(
     if not kept_ids:
         return list(candidate_ids)[:top_n]
 
-    q = query_vec.astype(np.float32, copy=False)
-    query_sims = cand_vecs @ q  # shape (N,)
+    raw = np.array([fused_scores.get(cid, 0.0) for cid in kept_ids], dtype=np.float32)
+    span = float(raw.max() - raw.min())
+    relevance = (raw - raw.min()) / span if span > 0 else np.ones_like(raw)  # shape (N,)
 
     selected_local: list[int] = []
     available: list[int] = list(range(len(kept_ids)))
 
-    first = int(np.argmax(query_sims))
+    first = int(np.argmax(relevance))
     selected_local.append(first)
     available.remove(first)
 
@@ -169,8 +176,8 @@ def _mmr_select(
         avail_vecs = cand_vecs[available]                       # (M, D)
         existing = avail_vecs @ sel_vecs.T                      # (M, k)
         max_existing = existing.max(axis=1)                     # (M,)
-        avail_query = query_sims[available]                     # (M,)
-        mmr = lambda_ * avail_query - (1.0 - lambda_) * max_existing
+        avail_rel = relevance[available]                        # (M,)
+        mmr = lambda_ * avail_rel - (1.0 - lambda_) * max_existing
         best_local = int(np.argmax(mmr))
         chosen = available[best_local]
         selected_local.append(chosen)
