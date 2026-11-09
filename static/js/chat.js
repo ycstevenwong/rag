@@ -761,6 +761,7 @@
     } else if (evt.type === "sources") {
       currentSources = evt.sources || [];
       assistantEl.citationSources = currentSources;
+      assistantEl.citationQuery = evt.rewritten_query;
       renderRewrittenQuery(evt.rewritten_query);
       renderSources(currentSources);
     } else if (evt.type === "delta") {
@@ -816,6 +817,7 @@
         if (root.citationSources && root.citationSources !== currentSources) {
           currentSources = root.citationSources;
           renderSources(currentSources);
+          renderRewrittenQuery(root.citationQuery);
         }
         const n = parseInt(el.dataset.n, 10);
         const card = document.querySelector(`.source-card[data-n="${n}"]`);

@@ -79,3 +79,43 @@ def test_admin_sees_only_the_admin_upload_controls(live_app, page):
     assert page.is_visible("#upload-hint-admin")
     assert not page.is_visible("#upload-hint-user")
     assert not page.is_visible("#anonymous-only-fields")
+
+
+def _upload(app, name: str, body: bytes) -> None:
+    client = app.test_client()
+    with client.session_transaction() as session:
+        session["is_admin"] = True
+    client.post(
+        "/upload",
+        data={"file": (io.BytesIO(body), name), "source_type": "other"},
+        content_type="multipart/form-data",
+    ).get_data()
+
+
+def _ask(page, question: str, nth_answer: int) -> None:
+    page.fill("#message-input", question)
+    page.keyboard.press("Enter")
+    page.wait_for_function(
+        """n => {
+            const answers = document.querySelectorAll('.message.assistant');
+            return answers.length === n && !answers[n - 1].classList.contains('cursor')
+                && answers[n - 1].textContent.length > 0;
+        }""",
+        arg=nth_answer,
+    )
+
+
+def test_old_citation_restores_that_answers_search_query(live_app, page):
+    app, base_url = live_app
+    _upload(app, "zebra.txt", b"zebra quota limit is 500")
+    _open(page, base_url)
+    _ask(page, "zebra quota", 1)
+    _ask(page, "a follow-up", 2)  # StubLLM rewrites this to "standalone question"
+    query = page.locator("#rewritten-query")
+    assert "standalone question" in query.inner_text()
+
+    page.locator(".message.assistant").nth(0).locator(".citation").first.click()
+    assert "zebra quota" in query.inner_text()
+
+    page.locator(".message.assistant").nth(1).locator(".citation").first.click()
+    assert "standalone question" in query.inner_text()
