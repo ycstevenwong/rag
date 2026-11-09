@@ -104,3 +104,77 @@ def test_other_lines_in_a_block_with_a_repeated_line_survive(tmp_path):
 
     assert "Acme Manual" not in joined
     assert "First line unique a" in joined
+
+
+def test_screen_block_keeps_its_line_breaks(tmp_path, monkeypatch):
+    from rag import config_facade
+
+    monkeypatch.setattr(config_facade, "PDF_SCREEN_FONTS", "cour")
+
+    def build(doc):
+        page = doc.new_page()
+        page.insert_text((72, 100), f"{BODY} {BODY}", fontsize=11)
+        page.insert_textbox(
+            fitz.Rect(72, 200, 500, 300),
+            "FIELD-A:  ____\nFIELD-B:  ____\nPF3=EXIT PF8=NEXT",
+            fontname="cour",
+            fontsize=10,
+        )
+
+    screens = [b for b in parse_pdf(_pdf(tmp_path, build)) if b.kind == "screen"]
+
+    assert len(screens) == 1
+    assert screens[0].text.splitlines() == ["FIELD-A:  ____", "FIELD-B:  ____", "PF3=EXIT PF8=NEXT"]
+
+
+def test_paragraph_lines_are_still_joined_with_spaces(tmp_path):
+    def build(doc):
+        page = doc.new_page()
+        page.insert_textbox(fitz.Rect(72, 100, 500, 200), f"{BODY}\nSecond line.", fontsize=11)
+
+    assert parse_pdf(_pdf(tmp_path, build))[0].text == f"{BODY} Second line."
+
+
+def _heading_paths(tmp_path, sizes_and_titles) -> list[str]:
+    def build(doc):
+        page = doc.new_page()
+        y = 60
+        for size, title in sizes_and_titles:
+            page.insert_text((72, y), title, fontsize=size)
+            page.insert_text((72, y + 25), f"{BODY} {title}", fontsize=11)
+            y += 60
+
+    blocks = parse_pdf(_pdf(tmp_path, build))
+    return [b.meta["heading_path"] for b in blocks if b.kind == "heading"]
+
+
+def test_larger_heading_does_not_nest_under_a_smaller_one(tmp_path):
+    assert _heading_paths(tmp_path, [(13, "Minor"), (18, "Bigger")]) == ["Minor", "Bigger"]
+
+
+def test_same_size_headings_are_siblings(tmp_path):
+    assert _heading_paths(tmp_path, [(18, "One"), (18, "Two")]) == ["One", "Two"]
+
+
+def test_smaller_heading_nests_under_a_larger_one(tmp_path):
+    assert _heading_paths(tmp_path, [(24, "Top"), (18, "Mid"), (13, "Low"), (18, "Mid2")]) == [
+        "Top",
+        "Top > Mid",
+        "Top > Mid > Low",
+        "Top > Mid2",
+    ]
+
+
+def test_encrypted_pdf_gives_a_clear_error(tmp_path):
+    doc = fitz.open()
+    doc.new_page().insert_text((72, 72), "secret", fontsize=11)
+    path = tmp_path / "locked.pdf"
+    doc.save(path, encryption=fitz.PDF_ENCRYPT_AES_256, user_pw="u", owner_pw="o")
+    doc.close()
+
+    with pytest.raises(ValueError, match="password"):
+        parse_pdf(path)
+
+
+def test_pdf_with_no_text_gives_no_blocks(tmp_path):
+    assert parse_pdf(_pdf(tmp_path, lambda doc: doc.new_page())) == []

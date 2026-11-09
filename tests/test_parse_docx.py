@@ -103,3 +103,14 @@ def test_table_of_contents_control_is_skipped(tmp_path):
     doc.add_paragraph("Real content")
 
     assert _texts(parse_docx(_save(doc, tmp_path))) == ["Real content"]
+
+
+def test_larger_heading_after_a_skipped_level_does_not_nest(tmp_path):
+    doc = Document()
+    doc.add_heading("Deep", 3)
+    doc.add_heading("Shallow", 2)
+    doc.add_heading("Below", 3)
+
+    paths = [b.meta["heading_path"] for b in parse_docx(_save(doc, tmp_path))]
+
+    assert paths == ["Deep", "Shallow", "Shallow > Below"]

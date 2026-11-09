@@ -35,6 +35,18 @@ def parse(path: Path) -> list[Block]:
     raise ValueError(f"Unsupported file type: {ext}")
 
 
+def _push_heading(stack: list[tuple[int, str]], level: int, text: str) -> None:
+    """Close every open section at this level or deeper, then open this one.
+    Compares levels rather than stack depth, since documents can skip levels."""
+    while stack and stack[-1][0] >= level:
+        stack.pop()
+    stack.append((level, text))
+
+
+def _heading_path(stack: list[tuple[int, str]]) -> str:
+    return " > ".join(text for _, text in stack)
+
+
 def parse_text(path: Path) -> list[Block]:
     text = path.read_text(encoding="utf-8", errors="replace")
     blocks: list[Block] = []
@@ -89,6 +101,8 @@ def parse_pdf(path: Path) -> list[Block]:
 
     doc = fitz.open(str(path))
     try:
+        if doc.needs_pass:
+            raise ValueError("This PDF is password-protected. Remove the password and re-upload.")
         # First pass — plain text per page, used to identify repeating
         # headers/footers we should drop from the structured pass.
         pages_text: list[str] = []
@@ -107,7 +121,7 @@ def parse_pdf(path: Path) -> list[Block]:
             return _parse_pdf_legacy(pages_text)
 
         heading_threshold = body_size * 1.15  # >= 15% larger than body = heading
-        heading_stack: list[str] = []
+        heading_stack: list[tuple[int, str]] = []
         blocks: list[Block] = []
         # Buffer for consecutive same-page screen blocks so they merge into one.
         screen_buf: list[str] = []
@@ -127,7 +141,7 @@ def parse_pdf(path: Path) -> list[Block]:
                 kind="screen",
                 meta={
                     "page": screen_buf_page,
-                    "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                    "heading_path": _heading_path(heading_stack),
                 },
             ))
             last_screen_page = screen_buf_page
@@ -174,7 +188,9 @@ def parse_pdf(path: Path) -> list[Block]:
                     if screen_buf_page is not None and screen_buf_page != page_num:
                         _flush_screen()
                     screen_buf_page = page_num
-                    screen_buf.append(text)
+                    # Line structure is what makes a screen readable, so unlike
+                    # prose its lines stay separate.
+                    screen_buf.append("\n".join(texts))
                     continue
                 # Non-screen block — flush any pending screen first.
                 if screen_buf:
@@ -199,11 +215,10 @@ def parse_pdf(path: Path) -> list[Block]:
                     # it stays anchored to the screen it describes.
                     if level <= 3:
                         last_screen_page = None
-                    heading_stack = heading_stack[: max(0, level - 1)]
-                    heading_stack.append(text)
+                    _push_heading(heading_stack, level, text)
                     meta = {
                         "page": page_num,
-                        "heading_path": " > ".join(heading_stack),
+                        "heading_path": _heading_path(heading_stack),
                         "level": level,
                     }
                     if last_screen_page is not None:
@@ -212,7 +227,7 @@ def parse_pdf(path: Path) -> list[Block]:
                 else:
                     meta = {
                         "page": page_num,
-                        "heading_path": " > ".join(heading_stack) if heading_stack else "",
+                        "heading_path": _heading_path(heading_stack),
                     }
                     if last_screen_page is not None:
                         meta["related_screen_page"] = last_screen_page
@@ -276,7 +291,7 @@ def parse_docx(path: Path) -> list[Block]:
 
     doc = Document(str(path))
     blocks: list[Block] = []
-    heading_stack: list[str] = []  # [h1, h2, h3, ...]
+    heading_stack: list[tuple[int, str]] = []
     stop_keywords = [k.lower() for k in cfg.DOCX_STOP_HEADINGS if k.strip()]
 
     for child in _docx_block_elements(doc.element.body):
@@ -300,18 +315,17 @@ def parse_docx(path: Path) -> list[Block]:
                     level = int(style.split()[-1])
                 except ValueError:
                     level = 1
-                heading_stack = heading_stack[: max(0, level - 1)]
-                heading_stack.append(text)
+                _push_heading(heading_stack, level, text)
                 blocks.append(Block(
                     text=text,
                     kind="heading",
-                    meta={"heading_path": " > ".join(heading_stack), "level": level},
+                    meta={"heading_path": _heading_path(heading_stack), "level": level},
                 ))
             else:
                 blocks.append(Block(
                     text=text,
                     kind="paragraph",
-                    meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
+                    meta={"heading_path": _heading_path(heading_stack)},
                 ))
 
         elif tag == "tbl":
@@ -319,7 +333,7 @@ def parse_docx(path: Path) -> list[Block]:
                 blocks.append(Block(
                     text=row_text,
                     kind="table_row",
-                    meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
+                    meta={"heading_path": _heading_path(heading_stack)},
                 ))
 
     return blocks
