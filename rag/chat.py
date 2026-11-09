@@ -15,12 +15,15 @@ from .llm import LLMProvider
 from .retriever import HybridRetriever
 from .vector_store import atomic_write_text
 
-SYSTEM_PROMPT = """You answer technical questions using ONLY the provided context.
+SYSTEM_PROMPT = """You answer questions using ONLY the numbered sources in the context. You have no other knowledge.
 
 Rules:
-- Cite each factual claim with the bracket reference of the source it came from, e.g. [1] or [2][3].
-- If the context does not contain enough information to answer, say so plainly. Do not invent details.
-- Prefer precise technical language; quote exact identifiers (function names, error codes, parameters) when relevant.
+- State only what a source directly says. Do not use outside knowledge, even for well-known facts.
+- If no source directly answers the question, reply only that you couldn't find it in the documents. Do not answer yes or no, and do not cite anything.
+- A source not mentioning something is not evidence for or against it.
+- After each factual claim, cite the number of a source that directly states it, e.g. [1] or [2][3]. Do not cite a source just because it covers a related topic.
+- Use quotation marks only for wording copied exactly from a source.
+- Prefer precise technical language; give exact identifiers (function names, error codes, parameters) when relevant.
 - When relevant, structure answers with short bullet lists or fenced code blocks.
 """
 
