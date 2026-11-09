@@ -97,10 +97,7 @@ UPLOAD_ORPHAN_MAX_AGE = int(os.getenv("UPLOAD_ORPHAN_MAX_AGE", "3600"))
 
 # Edit this list to add or remove the app codes shown in the upload form
 # and filter sidebar. Empty string is always accepted as "unspecified".
-APP_CODES = [
-    # "app-a",
-    # "app-b",
-]
+APP_CODES = ["SG", "MY", "ID"]  # Singapore, Malaysia, Indonesia
 
 # Per-app version map for manuals.
 # Keys: app_code (must also appear in APP_CODES).
@@ -147,13 +144,7 @@ PDF_SCREEN_FONTS = os.getenv("PDF_SCREEN_FONTS", "")
 PDF_FIELD_DESC_LABELS = os.getenv("PDF_FIELD_DESC_LABELS", "")
 
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
-    # "auth-svc": {
-    #     "login": "v2",
-    #     "token": "v1",
-    #     "mfa":   ["v1", "v2"],
-    #     "*":     "v2",
-    # },
-    # "billing-svc": {
-    #     "*": "v1",
-    # },
+    "SG": {"loan": "v2", "*": "v1"},
+    "MY": {"*": "v2"},
+    "ID": {"*": "v1"},
 }

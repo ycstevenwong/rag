@@ -47,6 +47,12 @@ for _name in _PATH_NAMES:
 # A developer's local .env must not change what importing app.py does.
 config.ADMIN_USERNAME = ""
 config.ADMIN_PASSWORD_HASH = ""
+# Tests opt in to app rules, so the real ones don't constrain unrelated tests.
+REAL_APP_CODES = config.APP_CODES
+REAL_APP_VERSION_MAP = config.APP_VERSION_MAP
+config.APP_CODES = []
+config.APP_VERSION_MAP = {}
+config_facade.APP_VERSION_MAP = {}
 
 
 class StubEmbedder:
