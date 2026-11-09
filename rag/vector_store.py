@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -328,14 +329,30 @@ def _replace_with_retry(tmp: str, dest: Path, attempts: int = 5) -> None:
     raise last
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Make a rename durable. Windows can't open a directory this way, and doesn't
+    need to."""
+    if sys.platform == "win32":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write_text(path: Path, content: str) -> None:
-    """Write UTF-8 text to `path` atomically, with retry on Windows file locks."""
+    """Write UTF-8 text to `path` atomically and durably: a crash or power loss
+    leaves either the old contents or the new. Retries on Windows file locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
         _replace_with_retry(tmp, path)
+        _fsync_directory(path.parent)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -343,15 +360,21 @@ def atomic_write_text(path: Path, content: str) -> None:
 
 
 def atomic_write_bytes(path: Path, writer) -> None:
-    """Write binary content to `path` atomically. `writer(tmp_path)` does the
-    actual byte write to a temp file; this helper handles the atomic rename
-    with retry on Windows file locks."""
+    """Write binary content to `path` atomically and durably. `writer(tmp_path)`
+    does the actual byte write to a temp file; this helper handles the sync and
+    the atomic rename, with retry on Windows file locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     os.close(fd)
     try:
         writer(Path(tmp))
+        fd = os.open(tmp, os.O_RDWR)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         _replace_with_retry(tmp, path)
+        _fsync_directory(path.parent)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
