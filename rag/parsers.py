@@ -381,39 +381,51 @@ def parse_xlsx(path: Path) -> list[Block]:
             header = next(rows_iter)
         except StopIteration:
             continue
-        header_str = " | ".join(str(c) if c is not None else "" for c in header)
-        buffer: list[str] = []
-        first_row_in_buffer = 2
-        row_idx = 2
-        for row in rows_iter:
-            cells = " | ".join(str(c) if c is not None else "" for c in row)
-            if cells.strip():
-                buffer.append(cells)
-            if len(buffer) >= 20:
-                blocks.append(Block(
-                    text=f"Headers: {header_str}\n" + "\n".join(buffer),
-                    kind="sheet_row",
-                    meta={
-                        "sheet": sheet.title,
-                        "row_start": first_row_in_buffer,
-                        "row_end": row_idx,
-                    },
-                ))
-                buffer = []
-                first_row_in_buffer = row_idx + 1
-            row_idx += 1
-        if buffer:
+        header_str = _sheet_row_text(header)
+        rows: list[tuple[int, str]] = []  # (row number, text) with data only
+
+        def flush() -> None:
             blocks.append(Block(
-                text=f"Headers: {header_str}\n" + "\n".join(buffer),
+                text=f"Headers: {header_str}\n" + "\n".join(text for _, text in rows),
                 kind="sheet_row",
                 meta={
                     "sheet": sheet.title,
-                    "row_start": first_row_in_buffer,
-                    "row_end": row_idx - 1,
+                    "row_start": rows[0][0],
+                    "row_end": rows[-1][0],
+                    "rows": [number for number, _ in rows],
                 },
+            ))
+            rows.clear()
+
+        n_data_rows = 0
+        for row_idx, row in enumerate(rows_iter, start=2):
+            if _row_has_data(row):
+                rows.append((row_idx, _sheet_row_text(row)))
+                n_data_rows += 1
+            if len(rows) >= 20:
+                flush()
+        if rows:
+            flush()
+        # With nothing below it, the first row is the content, not a header.
+        if n_data_rows == 0 and _row_has_data(header):
+            blocks.append(Block(
+                text=header_str,
+                kind="sheet_row",
+                meta={"sheet": sheet.title, "row_start": 1, "row_end": 1, "rows": [1]},
             ))
     wb.close()
     return blocks
+
+
+def _row_has_data(row: tuple) -> bool:
+    return any(c is not None and str(c).strip() for c in row)
+
+
+def _sheet_row_text(row: tuple) -> str:
+    """One line per row: a newline inside a cell would break the row numbering."""
+    return " | ".join(
+        re.sub(r"[\r\n]+", " ", str(c)) if c is not None else "" for c in row
+    )
 
 
 def _split_paragraphs(text: str) -> list[str]:

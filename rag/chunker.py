@@ -43,6 +43,7 @@ def chunk_blocks(
     current_page: Any = None
     current_slide: Any = None
     current_heading_path: Any = None
+    current_sheet: Any = None
 
     def flush() -> None:
         nonlocal buffer, buffer_tokens
@@ -75,8 +76,16 @@ def chunk_blocks(
             and current_heading_path is not None
             and block_heading_path != current_heading_path
         )
-        if crosses_page or crosses_slide or crosses_section:
+        block_sheet = block.meta.get("sheet")
+        crosses_sheet = (
+            block_sheet is not None
+            and current_sheet is not None
+            and block_sheet != current_sheet
+        )
+        if crosses_page or crosses_slide or crosses_section or crosses_sheet:
             flush()
+        if block_sheet is not None:
+            current_sheet = block_sheet
 
         if buffer_tokens + block_tokens > target_tokens and buffer:
             flush()
@@ -87,6 +96,9 @@ def chunk_blocks(
                 # intact — splitting mid-screen destroys column alignment
                 # and semantic meaning.
                 chunks.append(_blocks_to_chunk([block]))
+            elif "rows" in block.meta:
+                for piece in _split_sheet_block(block, target_tokens):
+                    chunks.append(_blocks_to_chunk([piece]))
             else:
                 for piece in _split_long_text(block.text, target_tokens):
                     chunks.append(_blocks_to_chunk([
@@ -143,6 +155,51 @@ def _blocks_to_chunk(buf: list[Block]) -> Chunk:
         if row_starts and row_ends:
             meta["row_range"] = [min(row_starts), max(row_ends)]
     return Chunk(text=text, token_count=count_tokens(text), meta=meta)
+
+
+def _split_sheet_block(block: Block, target_tokens: int) -> list[Block]:
+    """Split a spreadsheet block between rows. Every piece keeps the header line
+    and cites only its own rows. A single oversized row is split as plain text."""
+    header, *lines = block.text.split("\n")
+    rows = block.meta["rows"]
+    room = max(1, target_tokens - count_tokens(header))
+
+    def piece(numbers: list[int], texts: list[str]) -> Block:
+        return Block(
+            text="\n".join([header, *texts]),
+            kind=block.kind,
+            meta={
+                "sheet": block.meta["sheet"],
+                "row_start": numbers[0],
+                "row_end": numbers[-1],
+                "rows": numbers,
+            },
+        )
+
+    pieces: list[Block] = []
+    numbers: list[int] = []
+    texts: list[str] = []
+    used = 0
+
+    def flush() -> None:
+        nonlocal numbers, texts, used
+        if numbers:
+            pieces.append(piece(numbers, texts))
+        numbers, texts, used = [], [], 0
+
+    for number, line in zip(rows, lines):
+        tokens = count_tokens(line)
+        if used + tokens > room:
+            flush()
+        if tokens > room:
+            for part in _split_long_text(line, room):
+                pieces.append(piece([number], [part]))
+            continue
+        numbers.append(number)
+        texts.append(line)
+        used += tokens
+    flush()
+    return pieces
 
 
 def _split_long_text(text: str, target_tokens: int) -> list[str]:
