@@ -34,7 +34,7 @@ def pipeline(tmp_path):
     store = FaissStore(
         tmp_path / "v.faiss", tmp_path / "c.json", tmp_path / "d.json", tmp_path / "f.json"
     )
-    return IngestPipeline(store, BM25Store(tmp_path / "b.pkl"), StubEmbedder())
+    return IngestPipeline(store, BM25Store(), StubEmbedder())
 
 
 def _write(tmp_path, name, text):

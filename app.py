@@ -124,7 +124,7 @@ def create_app() -> Flask:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store(cfg.BM25_PATH)
+    bm25_store = BM25Store.from_chunks(vector_store.chunks)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
     pending_store = PendingStore(cfg.PENDING_DIR)
     retriever = HybridRetriever(vector_store, bm25_store, embedder)

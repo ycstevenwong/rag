@@ -55,7 +55,6 @@ VECTORS_PATH = INDEX_DIR / "vectors.faiss"
 CHUNKS_PATH = INDEX_DIR / "chunks.json"
 DOCS_PATH = INDEX_DIR / "docs.json"
 FILES_PATH = INDEX_DIR / "files.json"
-BM25_PATH = INDEX_DIR / "bm25.pkl"
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1")

@@ -152,7 +152,6 @@ class IngestPipeline:
                     (c.id, c.text) for c in self.vector_store.chunks
                 )
                 self.vector_store.persist()
-                self.bm25_store.persist()
                 result = {
                     "doc_id": doc.doc_id,
                     "n_chunks": len(records),
@@ -167,7 +166,6 @@ class IngestPipeline:
                 self.bm25_store.rebuild(
                     (c.id, c.text) for c in self.vector_store.chunks
                 )
-                self.bm25_store.persist()
             self.vector_store.persist()
             return removed
 

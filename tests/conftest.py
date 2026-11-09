@@ -15,7 +15,7 @@ import pytest
 import config
 from rag import config_facade
 
-_PATH_NAMES = ("VECTORS_PATH", "CHUNKS_PATH", "DOCS_PATH", "FILES_PATH", "BM25_PATH")
+_PATH_NAMES = ("VECTORS_PATH", "CHUNKS_PATH", "DOCS_PATH", "FILES_PATH")
 
 
 def _data_paths(root: Path) -> dict[str, Path]:
@@ -30,7 +30,6 @@ def _data_paths(root: Path) -> dict[str, Path]:
         "CHUNKS_PATH": index / "chunks.json",
         "DOCS_PATH": index / "docs.json",
         "FILES_PATH": index / "files.json",
-        "BM25_PATH": index / "bm25.pkl",
     }
     for name in ("UPLOAD_DIR", "INDEX_DIR", "SESSION_DIR", "PENDING_DIR"):
         paths[name].mkdir(parents=True, exist_ok=True)

@@ -48,7 +48,9 @@ python app.py
    `model`, `input`, `encoding_format`, `input_type`). Vectors are L2-normalized
    and appended to a FAISS `IndexFlatIP`. Chunk text and metadata persist to
    `data/index/chunks.json`.
-4. **BM25** index is rebuilt over the full corpus and pickled to `bm25.pkl`.
+4. **BM25** index is rebuilt in memory over the full corpus, at startup and after
+   each change. It isn't saved, and an old `data/index/bm25.pkl` is ignored and
+   can be deleted.
 5. **Query**: if there's conversation history, the LLM rewrites the question as a
    standalone query. Vector and BM25 searches run in parallel; results are fused
    with RRF; metadata filters (source_type / app_code / tags / version policy)
@@ -421,7 +423,7 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 - `rag/llm/__init__.py` — OpenAI-compatible HTTP LLM, SSE streaming.
 - `rag/vector_store.py` — `FileRecord` / `DocRecord` / `ChunkRecord` + FAISS
   with atomic persistence and in-memory lookup indices.
-- `rag/bm25_store.py` — pickled BM25.
+- `rag/bm25_store.py` — in-memory BM25, rebuilt from chunks.
 - `rag/retriever.py` — parallel hybrid search, RRF, metadata-aware filtering
   with auto-resolved version policy.
 - `rag/ingest.py` — orchestrates parse → chunk → embed → persist; emits per-batch
