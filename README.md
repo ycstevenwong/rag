@@ -184,7 +184,18 @@ Per-file overrides (apply when no path/filename info covers the field):
 - `--functionality <f>` — e.g. `login`, `mfa`.
 - `--tags <a,b,c>` — comma-separated, applied to every file in the run.
 
-### Run (Flask must be stopped — the store isn't multi-writer-safe)
+### Run (Flask must be stopped)
+
+Only one process can write the index. The app and this script each hold a lock
+on `data/index/.lock`, and a second one exits with an error. For the same reason,
+run gunicorn with **one worker** and use threads for concurrency, and don't use
+`--preload`, which would let forked workers share the lock:
+
+```bash
+gunicorn -w 1 --threads 8 --timeout 0 app:app
+```
+
+`--timeout 0` stops gunicorn from killing a worker during a long ingest stream.
 
 ```bash
 # Wipe first if you want to re-index from scratch
@@ -238,6 +249,7 @@ Exit codes:
 - `0` — every file succeeded (or was an idempotent skip).
 - `1` — bad path, empty target.
 - `2` — at least one file errored, others may have succeeded.
+- `3` — another process (the app or another ingest) holds the index lock.
 
 ### Idempotency and re-ingest
 

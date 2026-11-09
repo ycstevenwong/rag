@@ -52,9 +52,9 @@ walks only data/corpus/spec/. Pointing directly at the subdir
 
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
-WARNING: do NOT run this while `python app.py` is also running. Both
-processes hold their own in-memory copies of the FAISS/BM25 stores and
-the last writer wins on persist.
+This can't run while `python app.py` is running: both processes would hold
+their own in-memory copies of the stores and the last writer would win, so the
+script exits with code 3 if another process holds the index's writer lock.
 """
 from __future__ import annotations
 
@@ -72,6 +72,7 @@ from rag.bm25_store import BM25Store
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
 from rag.vector_store import FaissStore
+from rag.writer_lock import WriterLockHeld, acquire_writer_lock
 
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
@@ -228,6 +229,12 @@ def main() -> int:
     if not files:
         print(f"No supported documents found under {target}", file=sys.stderr)
         return 1
+
+    try:
+        acquire_writer_lock(cfg.INDEX_DIR / ".lock")
+    except WriterLockHeld as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
 
     embedder = Embedder(cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BASE_URL, cfg.EMBEDDING_API_KEY)
     vector_store = FaissStore(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 import uuid
@@ -22,6 +23,7 @@ from rag.ingest import IngestPipeline
 from rag.pending import PendingStore
 from rag.retriever import HybridRetriever
 from rag.vector_store import FaissStore
+from rag.writer_lock import acquire_writer_lock
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
 
@@ -92,6 +94,12 @@ def _cleanup_orphan_uploads() -> int:
     return removed
 
 
+def _is_reloader_parent() -> bool:
+    """With FLASK_DEBUG, Werkzeug's parent process only watches files and a child
+    serves requests, so the parent must not take the writer lock."""
+    return cfg.FLASK_DEBUG and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+
+
 def create_app() -> Flask:
     if _admin_enabled() and cfg.FLASK_SECRET_KEY in cfg.INSECURE_SECRET_KEYS:
         raise RuntimeError(
@@ -99,6 +107,8 @@ def create_app() -> Flask:
             "so anyone could forge an admin session. Set FLASK_SECRET_KEY to a long "
             "random value in .env."
         )
+    if not _is_reloader_parent():
+        acquire_writer_lock(cfg.INDEX_DIR / ".lock")
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_UPLOAD_MB * 1024 * 1024
