@@ -8,7 +8,8 @@ PENDING_DIR:
     <pending_id>.json    ← user-supplied metadata + provenance
 
 Admin actions:
-- approve → IngestPipeline runs over the file, then both files are deleted.
+- approve → IngestPipeline runs over the file; both files are deleted only if
+  it finishes. A failed or interrupted approval leaves the item queued.
 - reject  → both files are deleted.
 """
 from __future__ import annotations

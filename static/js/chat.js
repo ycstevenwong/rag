@@ -215,6 +215,7 @@
         const reader = r.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        let failed = false;
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -228,9 +229,15 @@
               const evt = JSON.parse(raw.slice(5).trim());
               if (evt.type === "stage") statusEl.textContent = `${evt.stage}…`;
               else if (evt.type === "progress") statusEl.textContent = `Embedding ${evt.done}/${evt.total}…`;
-              else if (evt.type === "error") { statusEl.classList.add("error"); statusEl.textContent = evt.error; }
+              else if (evt.type === "error") { failed = true; statusEl.classList.add("error"); statusEl.textContent = evt.error; }
             } catch {}
           }
+        }
+        // A failed item stays queued. Re-rendering the list would wipe the error
+        // message, so leave this row in place with its button ready for a retry.
+        if (failed) {
+          btn.disabled = false;
+          return;
         }
         refreshPending();
         refreshDocs();

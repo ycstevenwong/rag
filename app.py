@@ -380,11 +380,13 @@ def create_app() -> Flask:
                     functionality=functionality,
                     managed=True,
                 ):
+                    # Only a finished ingest removes the item. Errors and client
+                    # disconnects leave it queued so the admin can retry or reject.
+                    if event["type"] == "done":
+                        pending_store.remove(pending_id)
                     yield _sse(event)
             except Exception as exc:
                 yield _sse({"type": "error", "error": str(exc)})
-            finally:
-                pending_store.remove(pending_id)
 
         return Response(
             stream_with_context(event_stream()),
