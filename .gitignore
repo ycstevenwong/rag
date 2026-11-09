@@ -6,6 +6,9 @@ venv/
 data/uploads/*
 data/index/*
 data/sessions/*
+data/pending/*
+data/corpus/*
+.idea/
 !data/uploads/.gitkeep
 !data/index/.gitkeep
 !data/sessions/.gitkeep
