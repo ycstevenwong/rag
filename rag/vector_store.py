@@ -6,6 +6,9 @@ The store keeps four files in lockstep under config.INDEX_DIR:
   files.json     - per-file record (file_id, sha256, filename, n_chunks)
   docs.json      - per-(file, metadata) record; many DocRecord -> one FileRecord
 
+Beside them, index_meta.json holds the next chunk ID so that deleted IDs aren't
+reused. An index without that file still loads.
+
 The decoupling lets a single physical file be shared by multiple metadata
 "views" (e.g., the same PDF tagged for two different app_codes) without
 re-embedding the content.
@@ -72,6 +75,8 @@ class FaissStore:
         self.chunks_path = chunks_path
         self.docs_path = docs_path
         self.files_path = files_path
+        self._meta_path = vectors_path.parent / "index_meta.json"
+        self._next_chunk_id = 0
         self.dim: int | None = None
         self._lock = threading.RLock()
         self.chunks: list[ChunkRecord] = []
@@ -103,6 +108,17 @@ class FaissStore:
 
         self._check_alignment()
         self._rebuild_indices()
+        self._next_chunk_id = self._load_next_chunk_id()
+
+    def _load_next_chunk_id(self) -> int:
+        """The file only protects against reusing deleted IDs, so if it's missing
+        or unreadable (an index from before it existed) next_chunk_id() falls back
+        to the chunks."""
+        try:
+            value = json.loads(self._meta_path.read_text(encoding="utf-8"))["next_chunk_id"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return 0
+        return value if isinstance(value, int) else 0
 
     def _check_alignment(self) -> None:
         """A vector's position must equal its chunk's list index. Files from an
@@ -145,6 +161,7 @@ class FaissStore:
             self.chunks.extend(records)
             for r in records:
                 self._chunk_by_id.setdefault(r.id, r)
+                self._next_chunk_id = max(self._next_chunk_id, r.id + 1)
 
     def add_file(self, file: FileRecord) -> None:
         with self._lock:
@@ -242,12 +259,18 @@ class FaissStore:
             return out
 
     def next_chunk_id(self) -> int:
-        return (self.chunks[-1].id + 1) if self.chunks else 0
+        highest_held = max((c.id for c in self.chunks), default=-1)
+        return max(self._next_chunk_id, highest_held + 1)
 
     def persist(self) -> None:
         import faiss
 
         with self._lock:
+            # First, so a crash below can't let a later ingest reuse a deleted ID.
+            _atomic_write_text(
+                self._meta_path,
+                json.dumps({"next_chunk_id": self.next_chunk_id()}, indent=2),
+            )
             if self._index is not None:
                 _atomic_write_bytes(self.vectors_path, lambda p: faiss.write_index(self._index, str(p)))
             _atomic_write_text(

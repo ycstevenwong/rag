@@ -31,10 +31,14 @@ def test_load_refuses_more_vectors_than_chunks(tmp_path, monkeypatch):
     store = _persisted_store(tmp_path)
     store.add(_unit(1), [ChunkRecord(id=1, file_id="f", text="one", token_count=1)])
 
-    def crash(*_args, **_kwargs):
-        raise OSError("simulated crash")
+    real_write = vs._atomic_write_text
 
-    monkeypatch.setattr(vs, "_atomic_write_text", crash)
+    def crash_at_chunks(path, content):
+        if path == store.chunks_path:
+            raise OSError("simulated crash")
+        real_write(path, content)
+
+    monkeypatch.setattr(vs, "_atomic_write_text", crash_at_chunks)
     with pytest.raises(OSError):
         store.persist()
     monkeypatch.undo()
