@@ -7,14 +7,32 @@ from __future__ import annotations
 
 import re
 import threading
+import unicodedata
 from typing import Iterable
 
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+_WORD_RE = re.compile(r"\w+")
+# Kana, CJK ideographs and Hangul. These scripts don't reliably separate words
+# with spaces, so runs of them are indexed as overlapping character pairs.
+_CJK_RUN_RE = re.compile("[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]+")
+
+
+def _cjk_tokens(run: str) -> list[str]:
+    return [run] if len(run) == 1 else [run[i : i + 2] for i in range(len(run) - 1)]
 
 
 def tokenize(text: str) -> list[str]:
-    return [t.lower() for t in _TOKEN_RE.findall(text)]
+    tokens: list[str] = []
+    for word in _WORD_RE.findall(unicodedata.normalize("NFKC", text).lower()):
+        pos = 0
+        for run in _CJK_RUN_RE.finditer(word):
+            if run.start() > pos:
+                tokens.append(word[pos : run.start()])
+            tokens.extend(_cjk_tokens(run.group()))
+            pos = run.end()
+        if pos < len(word):
+            tokens.append(word[pos:])
+    return tokens
 
 
 class BM25Store:
@@ -39,7 +57,9 @@ class BM25Store:
             for cid, text in corpus:
                 tokenized.append(tokenize(text))
                 chunk_ids.append(cid)
-            self._state = (BM25Okapi(tokenized), chunk_ids) if tokenized else None
+            # BM25Okapi divides by its vocabulary size, so it can't take a corpus
+            # with no tokens at all.
+            self._state = (BM25Okapi(tokenized), chunk_ids) if any(tokenized) else None
 
     def search(self, query: str, k: int) -> list[tuple[int, float]]:
         state = self._state
