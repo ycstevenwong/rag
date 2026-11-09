@@ -467,6 +467,9 @@ def create_app() -> Flask:
     removed = _cleanup_orphan_uploads()
     if removed:
         print(f"[startup] cleaned {removed} orphan upload file(s) from {cfg.UPLOAD_DIR}", flush=True)
+    removed = pending_store.cleanup_orphans(cfg.UPLOAD_ORPHAN_MAX_AGE)
+    if removed:
+        print(f"[startup] cleaned {removed} orphan pending file(s) from {cfg.PENDING_DIR}", flush=True)
 
     return app
 
