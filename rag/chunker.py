@@ -17,10 +17,14 @@ from typing import Any, Iterable
 from .parsers import Block
 
 
+_CJK_CHAR_RE = re.compile("[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
+
+
 def count_tokens(text: str) -> int:
-    # Rough heuristic: ~4 chars per token for English text. Good enough for
-    # chunk-size control; we don't need byte-perfect counts here.
-    return max(1, len(text) // 4)
+    # Rough heuristic: ~4 chars per token for alphabetic text and ~1 per CJK
+    # character. Good enough for size control; we don't need exact counts here.
+    n_cjk = len(_CJK_CHAR_RE.findall(text))
+    return max(1, n_cjk + (len(text) - n_cjk) // 4)
 
 
 @dataclass

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import config_facade as cfg
+from .chunker import count_tokens
 from .citations import build_context_block
 from .llm import LLMProvider
 from .retriever import HybridRetriever
@@ -88,7 +89,13 @@ class ChatService:
             else f"No retrieved context is available. Answer based only on what the user has said.\n\nQuestion: {question}"
         )
 
-        messages = [*_trim_history(history, max_turns=8), {"role": "user", "content": user_message}]
+        history_budget = (
+            cfg.CONTEXT_TOKEN_BUDGET - count_tokens(SYSTEM_PROMPT) - count_tokens(user_message)
+        )
+        messages = [
+            *_trim_history(history, max_turns=8, token_budget=history_budget),
+            {"role": "user", "content": user_message},
+        ]
 
         full_reply: list[str] = []
         try:
@@ -172,6 +179,20 @@ def _strip_citations(text: str) -> str:
     )
 
 
-def _trim_history(history: list[dict], max_turns: int) -> list[dict]:
-    trimmed = history[-(max_turns * 2):]
-    return [{"role": m["role"], "content": _strip_citations(m["content"])} for m in trimmed]
+def _trim_history(history: list[dict], max_turns: int, token_budget: int) -> list[dict]:
+    """The most recent whole turns that fit in the budget, oldest first. The current
+    question and its context have already been charged, so history gets what's left."""
+    recent = [
+        {"role": m["role"], "content": _strip_citations(m["content"])}
+        for m in history[-(max_turns * 2):]
+    ]
+    kept: list[dict] = []
+    used = 0
+    for end in range(len(recent), 0, -2):
+        turn = recent[max(0, end - 2) : end]
+        cost = sum(count_tokens(m["content"]) for m in turn)
+        if used + cost > token_budget:
+            break
+        kept = turn + kept
+        used += cost
+    return kept
