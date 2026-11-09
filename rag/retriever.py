@@ -192,6 +192,12 @@ def _mmr_select(
     return [kept_ids[i] for i in selected_local]
 
 
+def _label(value: str) -> str:
+    """Labels are typed by people, and "Loan" missing a "loan" rule would silently
+    fall through to the default version."""
+    return value.strip().casefold()
+
+
 def _doc_matches(doc: DocRecord, filters: dict) -> bool:
     """Filter semantics: empty value on the doc = "universal" (passes any filter
     for that field). Non-empty must match the user's choice. Version is
@@ -203,11 +209,11 @@ def _doc_matches(doc: DocRecord, filters: dict) -> bool:
     if app_code and doc.app_code and doc.app_code != app_code:
         return False
     if app_code:
-        version_map = cfg.APP_VERSION_MAP.get(app_code) or {}
-        effective = version_map.get(doc.functionality, version_map.get("*"))
+        version_map = {_label(k): v for k, v in (cfg.APP_VERSION_MAP.get(app_code) or {}).items()}
+        effective = version_map.get(_label(doc.functionality), version_map.get("*"))
         if effective and doc.version:
             allowed = [effective] if isinstance(effective, str) else list(effective)
-            if doc.version not in allowed:
+            if _label(doc.version) not in {_label(v) for v in allowed}:
                 return False
     tags = filters.get("tags") or []
     if tags and doc.tags:

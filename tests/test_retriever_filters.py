@@ -96,3 +96,51 @@ def test_rrf_scores_sum_reciprocal_ranks_across_both_lists(tmp_path):
     assert all(r.bm25_rank is None for r in others)
     assert {r.vector_rank for r in others} == {1, 2}
     assert {round(r.score, 6) for r in others} == {round(1 / 62, 6), round(1 / 63, 6)}
+
+
+RULES = {
+    "SG": {"loan": "v2", "*": "v1"},
+    "MY": {"*": "v2"},
+    "ID": {"*": "v1"},
+}
+
+
+@pytest.mark.parametrize(
+    "app, functionality, version, visible",
+    [
+        ("SG", "loan", "v2", True),
+        ("SG", "loan", "v1", False),
+        ("SG", "card", "v1", True),
+        ("SG", "card", "v2", False),
+        ("MY", "loan", "v2", True),
+        ("MY", "loan", "v1", False),
+        ("MY", "card", "v2", True),
+        ("ID", "loan", "v1", True),
+        ("ID", "loan", "v2", False),
+        # Labels typed differently must follow the same rule, not fall through to "*".
+        ("SG", "Loan", "v2", True),
+        ("SG", "LOAN ", "v1", False),
+        ("MY", "card", "V2", True),
+        ("ID", "card", "V2", False),
+        ("SG", "Loan", "V2", True),
+    ],
+)
+def test_version_rules_ignore_case_and_spacing(monkeypatch, app, functionality, version, visible):
+    from rag import config_facade
+    from rag.retriever import _doc_matches
+
+    monkeypatch.setattr(config_facade, "APP_VERSION_MAP", RULES)
+    doc = DocRecord("d", "f", source_type="manual", version=version, functionality=functionality)
+
+    assert _doc_matches(doc, {"app_code": app}) is visible
+
+
+def test_version_rule_given_as_a_list_ignores_case(monkeypatch):
+    from rag import config_facade
+    from rag.retriever import _doc_matches
+
+    monkeypatch.setattr(config_facade, "APP_VERSION_MAP", {"SG": {"*": ["V1", "v2"]}})
+
+    assert _doc_matches(DocRecord("d", "f", version="v1"), {"app_code": "SG"}) is True
+    assert _doc_matches(DocRecord("d", "f", version="V2"), {"app_code": "SG"}) is True
+    assert _doc_matches(DocRecord("d", "f", version="v3"), {"app_code": "SG"}) is False
