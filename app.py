@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import time
 import uuid
@@ -26,6 +27,9 @@ from rag.vector_store import FaissStore
 from rag.writer_lock import acquire_writer_lock
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
+
+# These characters map to a file name unchanged, so two IDs can't share a file.
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # Login rate limit — per remote IP, in-memory, cleared on success.
 _LOGIN_WINDOW_SECONDS = 300   # 5 minutes
@@ -407,6 +411,8 @@ def create_app() -> Flask:
 
     @app.get("/chunks/<int:chunk_id>")
     def get_chunk(chunk_id: int):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
         c = vector_store.get_chunk(chunk_id)
         if c is None:
             return jsonify({"error": "not found"}), 404
@@ -414,6 +420,8 @@ def create_app() -> Flask:
 
     @app.get("/sessions/<session_id>")
     def get_session(session_id: str):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
         from rag.chat import _load_session
         return jsonify(_load_session(session_id))
 
@@ -421,6 +429,8 @@ def create_app() -> Flask:
     def chat():
         payload = request.get_json(force=True) or {}
         session_id = payload.get("session_id") or uuid.uuid4().hex
+        if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id):
+            return jsonify({"error": "Invalid session_id"}), 400
         question = (payload.get("message") or "").strip()
         if not question:
             return jsonify({"error": "empty message"}), 400
