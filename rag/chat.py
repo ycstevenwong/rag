@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Iterator
@@ -11,6 +12,7 @@ from . import config_facade as cfg
 from .citations import build_context_block
 from .llm import LLMProvider
 from .retriever import HybridRetriever
+from .vector_store import atomic_write_text
 
 SYSTEM_PROMPT = """You answer technical questions using ONLY the provided context.
 
@@ -32,6 +34,8 @@ Standalone question:"""
 
 _CITATION_RE = re.compile(r"[ \t]*(?:\[\d+(?:,\s*\d+)*\])+")
 _CODE_SPAN_RE = re.compile(r"(```[\s\S]*?```|`[^`\n]+`)")
+
+_session_lock = threading.RLock()
 
 
 class ChatService:
@@ -96,15 +100,20 @@ class ChatService:
             return
 
         assistant_text = "".join(full_reply)
-        history.append({"role": "user", "content": question, "ts": time.time()})
-        history.append({
-            "role": "assistant",
-            "content": assistant_text,
-            "ts": time.time(),
-            "sources": sources,
-            "rewritten_query": standalone_query if standalone_query != question else None,
-        })
-        _save_session(session_id, history)
+        try:
+            _append_to_session(session_id, [
+                {"role": "user", "content": question, "ts": time.time()},
+                {
+                    "role": "assistant",
+                    "content": assistant_text,
+                    "ts": time.time(),
+                    "sources": sources,
+                    "rewritten_query": standalone_query if standalone_query != question else None,
+                },
+            ])
+        except OSError as exc:
+            yield {"type": "error", "error": f"Answer not saved to history: {exc}"}
+            return
         yield {"type": "done"}
 
     def _rewrite_query(self, provider: LLMProvider, history: list[dict], question: str) -> str:
@@ -127,18 +136,30 @@ def _session_path(session_id: str) -> Path:
 
 def _load_session(session_id: str) -> list[dict]:
     p = _session_path(session_id)
-    if not p.exists():
-        return []
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
+    with _session_lock:
+        if not p.exists():
+            return []
+        try:
+            history = json.loads(p.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            history = None
+        if isinstance(history, list):
+            return history
+        # Keep an unreadable file, or the next save would destroy what's left of it.
+        kept = p.with_name(f"{p.name}.corrupt-{time.time_ns()}")
+        p.replace(kept)
+        print(f"[session] unreadable history moved to {kept.name}", flush=True)
         return []
 
 
-def _save_session(session_id: str, history: list[dict]) -> None:
+def _append_to_session(session_id: str, messages: list[dict]) -> None:
+    """Add a finished turn to the file's current contents, not to the copy loaded
+    when the turn began, so concurrent turns in one session don't drop each other."""
     p = _session_path(session_id)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    with _session_lock:
+        history = _load_session(session_id)
+        history.extend(messages)
+        atomic_write_text(p, json.dumps(history, ensure_ascii=False, indent=2))
 
 
 def _strip_citations(text: str) -> str:
