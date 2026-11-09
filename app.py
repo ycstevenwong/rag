@@ -1,6 +1,7 @@
 """Flask app: upload, chat (SSE), document management."""
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from pathlib import Path
 from flask import (
     Flask, Response, jsonify, render_template, request, session, stream_with_context
 )
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
 import config as cfg
@@ -45,7 +47,22 @@ def _login_allowed(ip: str) -> bool:
 
 
 def _record_login_failure(ip: str) -> None:
-    _login_failures.setdefault(ip, []).append(time.time())
+    now = time.time()
+    # Forget addresses whose failures have all expired, so the dict can't grow forever.
+    for known in list(_login_failures):
+        if all(now - t >= _LOGIN_WINDOW_SECONDS for t in _login_failures[known]):
+            del _login_failures[known]
+    _login_failures.setdefault(ip, []).append(now)
+
+
+def _credentials_match(username, password) -> bool:
+    """Always runs the slow password hash, so a wrong username takes as long to
+    reject as a wrong password and valid usernames can't be found by timing."""
+    if not isinstance(username, str) or not isinstance(password, str):
+        return False
+    password_ok = check_password_hash(cfg.ADMIN_PASSWORD_HASH, password)
+    username_ok = hmac.compare_digest(username.encode(), cfg.ADMIN_USERNAME.encode())
+    return username_ok and password_ok
 
 
 def _is_admin() -> bool:
@@ -114,6 +131,8 @@ def create_app() -> Flask:
     if not _is_reloader_parent():
         acquire_writer_lock(cfg.INDEX_DIR / ".lock")
     app = Flask(__name__, static_folder="static", template_folder="templates")
+    if cfg.TRUSTED_PROXY_COUNT:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=cfg.TRUSTED_PROXY_COUNT)
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_UPLOAD_MB * 1024 * 1024
     app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -324,12 +343,12 @@ def create_app() -> Flask:
         if not _login_allowed(ip):
             return jsonify({"error": "Too many failed attempts. Try again in a few minutes."}), 429
         payload = request.get_json(force=True) or {}
-        username = (payload.get("username") or "").strip()
-        password = payload.get("password") or ""
-        if (
-            username != cfg.ADMIN_USERNAME
-            or not check_password_hash(cfg.ADMIN_PASSWORD_HASH, password)
-        ):
+        if not isinstance(payload, dict):
+            payload = {}
+        username = payload.get("username") or ""
+        if isinstance(username, str):
+            username = username.strip()
+        if not _credentials_match(username, payload.get("password") or ""):
             _record_login_failure(ip)
             return jsonify({"error": "Invalid username or password."}), 401
         _login_failures.pop(ip, None)

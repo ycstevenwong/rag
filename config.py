@@ -41,6 +41,10 @@ FLASK_DEBUG = env_flag("FLASK_DEBUG")
 # Set this when the app is served over HTTPS. Browsers won't send a Secure
 # cookie over plain HTTP, so leaving it on locally would break admin login.
 SESSION_COOKIE_SECURE = env_flag("SESSION_COOKIE_SECURE")
+# Reverse proxies in front of the app. The login limiter then reads the client's
+# address from X-Forwarded-For. At 0 that header is ignored, because without a proxy
+# anyone could set it to dodge the limit.
+TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT") or "0")
 
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
