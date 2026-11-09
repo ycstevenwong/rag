@@ -26,14 +26,22 @@ class LLMProvider:
             timeout=300,
         ) as resp:
             resp.raise_for_status()
-            for line in resp.iter_lines(decode_unicode=True):
-                if not line or not line.startswith("data:"):
+            # Split on raw bytes and decode each line as UTF-8. With no charset on
+            # text/event-stream, requests would decode as Latin-1, which garbles
+            # the text and turns byte 0x85 into a line break.
+            for raw_line in resp.iter_lines():
+                line = raw_line.decode("utf-8")
+                if not line.startswith("data:"):
                     continue
                 payload = line[len("data:"):].strip()
                 if payload == "[DONE]":
                     break
                 chunk = json.loads(payload)
-                delta = chunk["choices"][0].get("delta", {})
+                # Some servers send chunks with no choices, such as usage totals.
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
                 content = delta.get("content")
                 if content:
                     yield content
