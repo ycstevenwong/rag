@@ -340,25 +340,15 @@ def parse_pptx(path: Path) -> list[Block]:
     prs = Presentation(str(path))
     blocks: list[Block] = []
     for slide_num, slide in enumerate(prs.slides, start=1):
-        title = ""
-        body_parts: list[str] = []
-        for shape in slide.shapes:
-            if not shape.has_text_frame:
-                continue
-            text = shape.text_frame.text.strip()
-            if not text:
-                continue
-            if shape == slide.shapes.title or (
-                shape.has_text_frame and shape.text_frame.text and not title
-            ):
-                if not title:
-                    title = text
-                    continue
-            body_parts.append(text)
+        title_shape = slide.shapes.title
+        title = title_shape.text_frame.text.strip() if title_shape is not None else ""
+        body_parts = list(_pptx_shape_texts(slide.shapes, skip=title_shape))
 
         notes = ""
         if slide.has_notes_slide:
-            notes = (slide.notes_slide.notes_text_frame.text or "").strip()
+            # None when the notes slide has no body placeholder.
+            notes_frame = slide.notes_slide.notes_text_frame
+            notes = (notes_frame.text or "").strip() if notes_frame is not None else ""
 
         combined = "\n\n".join(part for part in [title, *body_parts, notes] if part)
         if combined:
@@ -368,6 +358,26 @@ def parse_pptx(path: Path) -> list[Block]:
                 meta={"slide_num": slide_num, "slide_title": title},
             ))
     return blocks
+
+
+def _pptx_shape_texts(shapes, skip=None):
+    """Text of each shape in z-order, descending into groups and reading tables."""
+    from pptx.shapes.group import GroupShape
+
+    for shape in shapes:
+        if skip is not None and shape == skip:
+            continue
+        if isinstance(shape, GroupShape):
+            yield from _pptx_shape_texts(shape.shapes)
+        elif shape.has_table:
+            rows = (" | ".join(cell.text.strip() for cell in row.cells) for row in shape.table.rows)
+            text = "\n".join(row for row in rows if row.strip(" |"))
+            if text:
+                yield text
+        elif shape.has_text_frame:
+            text = shape.text_frame.text.strip()
+            if text:
+                yield text
 
 
 def parse_xlsx(path: Path) -> list[Block]:
