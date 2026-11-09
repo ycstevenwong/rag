@@ -783,18 +783,29 @@
   }
 
   function renderMarkdown(text) {
-    let html = escapeHtml(text);
-    html = html.replace(/```([\s\S]*?)```/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`);
-    html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    // Code is set aside behind NUL-delimited placeholders so that nothing below
+    // can rewrite it: `rows[1]` is not a citation.
+    const code = [];
+    const setAside = (html) => {
+      code.push(html);
+      return `\u0000${code.length - 1}\u0000`;
+    };
+    let html = escapeHtml(text.replace(/\u0000/g, ""));
+    html = html.replace(/```([\s\S]*?)```/g, (_, c) => setAside(`<pre><code>${c.trim()}</code></pre>`));
+    html = html.replace(/`([^`\n]+)`/g, (_, c) => setAside(`<code>${c}</code>`));
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/\[(\d+(?:,\s*\d+)*)\]/g, (match, group) => {
-      const nums = group.split(/,\s*/);
-      return nums.map((n) =>
-        `<span class="citation" data-n="${n}">${n}</span>`
-      ).join("");
+    html = html.replace(/\[(\d+(?:\s*[-–,]\s*\d+)*)\]/g, (match, group) => {
+      // Only numbers with a source become chips, so an invented [12] or a literal
+      // [0] stays visible as plain text rather than a chip that does nothing.
+      const nums = group.split(/\s*,\s*/).flatMap((part) => {
+        const [lo, hi = lo] = part.split(/\s*[-–]\s*/).map(Number);
+        return currentSources.map((s) => s.n).filter((n) => n >= lo && n <= hi);
+      });
+      if (!nums.length) return match;
+      return nums.map((n) => `<span class="citation" data-n="${n}">${n}</span>`).join("");
     });
     html = html.replace(/\n/g, "<br>");
-    return html;
+    return html.replace(/\u0000(\d+)\u0000/g, (_, i) => code[Number(i)]);
   }
 
   function attachCitationHandlers(root) {
