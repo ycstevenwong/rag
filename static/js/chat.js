@@ -132,8 +132,8 @@
             <select data-field="app_code">${appCodeOptions}</select>
           </div>
           <div class="meta-row">
-            <input data-field="version" type="text" placeholder="version" value="${escapeHtml(item.version || "")}" />
-            <input data-field="functionality" type="text" placeholder="functionality" value="${escapeHtml(item.functionality || "")}" />
+            <select data-field="version" title="Version">${labelOptions(uploadVersionEl, item.version, "version")}</select>
+            <select data-field="functionality" title="Functionality">${labelOptions(uploadFunctionalityEl, item.functionality, "functionality")}</select>
           </div>
           <div class="meta-row">
             <input data-field="tags" type="text" placeholder="tags" value="${escapeHtml((item.tags || []).join(","))}" />
@@ -148,6 +148,19 @@
       `;
       pendingListEl.appendChild(li);
     }
+  }
+
+  // Options for reviewing or editing a label. An older value that isn't listed stays
+  // selectable, so editing another field doesn't silently change it.
+  function labelOptions(selectEl, current, name) {
+    const value = (current || "").toLowerCase();
+    const listed = Array.from(selectEl.options).map((o) => o.value).filter(Boolean);
+    const known = listed.some((v) => v.toLowerCase() === value);
+    const values = current && !known ? [current, ...listed] : listed;
+    const blank = `<option value="" disabled${current ? "" : " selected"}>${name} *</option>`;
+    return blank + values.map((v) =>
+      `<option value="${escapeHtml(v)}"${v.toLowerCase() === value ? " selected" : ""}>${escapeHtml(v)}</option>`
+    ).join("");
   }
 
   function _toggleAppCodeForManual(formEl) {
@@ -499,8 +512,8 @@
             <option value="spec"${doc.source_type === "spec" ? " selected" : ""}>Spec</option>
           </select>
           <select data-field="app_code">${appCodeOptions}</select>
-          <input data-field="version" type="text" placeholder="version" value="${escapeHtml(doc.version || "")}" />
-          <input data-field="functionality" type="text" placeholder="functionality" value="${escapeHtml(doc.functionality || "")}" />
+          <select data-field="version" title="Version">${labelOptions(uploadVersionEl, doc.version, "version")}</select>
+          <select data-field="functionality" title="Functionality">${labelOptions(uploadFunctionalityEl, doc.functionality, "functionality")}</select>
           <input data-field="tags" type="text" placeholder="tags" value="${escapeHtml((doc.tags || []).join(","))}" />
           <button type="button" data-action="cancel-edit">Cancel</button>
           <button type="button" data-action="save-edit" class="primary">Save</button>

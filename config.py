@@ -143,6 +143,12 @@ PDF_SCREEN_FONTS = os.getenv("PDF_SCREEN_FONTS", "")
 # Empty = disabled.
 PDF_FIELD_DESC_LABELS = os.getenv("PDF_FIELD_DESC_LABELS", "")
 
+# Labels a new document can be given. Rules in APP_VERSION_MAP match on these, so
+# they're dropdowns rather than free text. Add a functionality here to offer it,
+# and add a rule below only if it needs a different version from "*".
+FUNCTIONALITIES = ["loan", "other"]
+VERSIONS = ["v1", "v2"]
+
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
     "SG": {"loan": "v2", "*": "v1"},
     "MY": {"*": "v2"},

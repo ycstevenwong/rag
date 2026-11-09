@@ -44,8 +44,18 @@
           </select>
         </div>
         <div class="meta-row">
-          <input id="upload-version" type="text" placeholder="version *" required />
-          <input id="upload-functionality" type="text" placeholder="functionality *" required />
+          <select id="upload-version" title="Version" required>
+            <option value="" disabled selected>Version *</option>
+            {% for version in versions %}
+            <option value="{{ version }}">{{ version }}</option>
+            {% endfor %}
+          </select>
+          <select id="upload-functionality" title="Functionality" required>
+            <option value="" disabled selected>Functionality *</option>
+            {% for functionality in functionalities %}
+            <option value="{{ functionality }}">{{ functionality }}</option>
+            {% endfor %}
+          </select>
         </div>
         <div class="meta-row">
           <input id="upload-tags" type="text" placeholder="tags: comma,separated (optional)" />

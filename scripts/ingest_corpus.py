@@ -71,6 +71,7 @@ import config as cfg
 from rag.bm25_store import BM25Store
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
+from rag.metadata import canonical_label
 from rag.vector_store import FaissStore
 from rag.writer_lock import WriterLockHeld, acquire_writer_lock
 
@@ -293,6 +294,8 @@ def main() -> int:
             print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
 
         try:
+            version = canonical_label(version, cfg.VERSIONS, "version")
+            functionality = canonical_label(functionality, cfg.FUNCTIONALITIES, "functionality")
             for event in ingest.ingest_stream(
                 file_path,
                 original_filename=file_path.name,

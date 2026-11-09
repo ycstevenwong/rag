@@ -23,6 +23,7 @@ from rag.bm25_store import BM25Store
 from rag.chat import ChatService
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
+from rag.metadata import canonical_label
 from rag.pending import PendingStore
 from rag.retriever import HybridRetriever
 from rag.vector_store import FaissStore
@@ -69,6 +70,17 @@ def _is_admin() -> bool:
 
 def _admin_enabled() -> bool:
     return bool(cfg.ADMIN_USERNAME and cfg.ADMIN_PASSWORD_HASH)
+
+
+def _checked_labels(source_type: str, app_code: str, version, functionality) -> tuple[str, str]:
+    """Return (version, functionality) in their listed spellings. Raises ValueError
+    for a label that isn't listed, or a non-manual document with an unknown app."""
+    if source_type != "manual" and cfg.APP_CODES and app_code not in cfg.APP_CODES:
+        raise ValueError(f"Choose an app from: {', '.join(cfg.APP_CODES)}.")
+    return (
+        canonical_label(version, cfg.VERSIONS, "version"),
+        canonical_label(functionality, cfg.FUNCTIONALITIES, "functionality"),
+    )
 
 
 def _free_disk_gb() -> float:
@@ -158,6 +170,8 @@ def create_app() -> Flask:
             "index.html",
             model=cfg.LLM_MODEL,
             app_codes=cfg.APP_CODES,
+            versions=cfg.VERSIONS,
+            functionalities=cfg.FUNCTIONALITIES,
         )
 
     @app.get("/docs")
@@ -228,6 +242,10 @@ def create_app() -> Flask:
         # universal.
         if source_type == "manual":
             app_code = ""
+        try:
+            version, functionality = _checked_labels(source_type, app_code, version, functionality)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         f.save(dest)
 
         # Anonymous uploads go to the pending queue; admin uploads ingest now.
@@ -304,14 +322,25 @@ def create_app() -> Flask:
         if doc is None:
             return jsonify({"error": "Not found"}), 404
         payload = request.get_json(silent=True) or {}
+        # A label indexed before the lists existed may stay as it is, but any change
+        # has to be to a listed one. Checked first, so a rejected edit changes nothing.
+        try:
+            version = doc.version
+            functionality = doc.functionality
+            if "version" in payload and str(payload["version"]).strip() != doc.version:
+                version = canonical_label(str(payload["version"]), cfg.VERSIONS, "version")
+            if "functionality" in payload and str(payload["functionality"]).strip() != doc.functionality:
+                functionality = canonical_label(
+                    str(payload["functionality"]), cfg.FUNCTIONALITIES, "functionality"
+                )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        doc.version = version
+        doc.functionality = functionality
         if "source_type" in payload:
             doc.source_type = (str(payload["source_type"]).strip().lower() or "other")
         if "app_code" in payload:
             doc.app_code = str(payload["app_code"]).strip()
-        if "version" in payload:
-            doc.version = str(payload["version"]).strip()
-        if "functionality" in payload:
-            doc.functionality = str(payload["functionality"]).strip()
         if "tags" in payload:
             raw_tags = payload["tags"]
             if isinstance(raw_tags, str):
@@ -389,6 +418,10 @@ def create_app() -> Flask:
         app_code = (payload.get("app_code") or item.app_code or "").strip()
         if source_type == "manual":
             app_code = ""
+        try:
+            version, functionality = _checked_labels(source_type, app_code, version, functionality)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         raw_tags = payload.get("tags")
         if raw_tags is None:
             tags = list(item.tags or [])

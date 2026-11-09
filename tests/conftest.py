@@ -50,6 +50,10 @@ config.ADMIN_PASSWORD_HASH = ""
 # Tests opt in to app rules, so the real ones don't constrain unrelated tests.
 REAL_APP_CODES = config.APP_CODES
 REAL_APP_VERSION_MAP = config.APP_VERSION_MAP
+REAL_FUNCTIONALITIES = getattr(config, "FUNCTIONALITIES", None)
+REAL_VERSIONS = getattr(config, "VERSIONS", None)
+config.FUNCTIONALITIES = []
+config.VERSIONS = []
 config.APP_CODES = []
 config.APP_VERSION_MAP = {}
 config_facade.APP_VERSION_MAP = {}

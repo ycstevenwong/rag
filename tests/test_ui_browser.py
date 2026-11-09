@@ -90,7 +90,7 @@ def _upload(app, name: str, body: bytes) -> None:
         session["is_admin"] = True
     client.post(
         "/upload",
-        data={"file": (io.BytesIO(body), name), "source_type": "other"},
+        data={"file": (io.BytesIO(body), name), "source_type": "manual"},
         content_type="multipart/form-data",
     ).get_data()
 
@@ -155,3 +155,34 @@ def test_changing_app_starts_a_new_conversation(live_app, page):
     assert page.locator(".message").count() == 0
     assert page.inner_text("#session-id") != first_session
     assert page.is_enabled("#send-btn")
+
+
+def test_labels_are_chosen_from_dropdowns_including_when_reviewing(live_app, page, monkeypatch):
+    app, base_url = live_app
+    monkeypatch.setattr(config, "FUNCTIONALITIES", ["loan", "other"])
+    monkeypatch.setattr(config, "VERSIONS", ["v1", "v2"])
+    _log_in(page, base_url)
+    _open(page, base_url)
+    assert page.locator("#upload-version option").all_inner_texts() == ["Version *", "v1", "v2"]
+    assert page.locator("#upload-functionality option").all_inner_texts() == ["Functionality *", "loan", "other"]
+
+    # Upload as an admin through the real form, then edit through the docs table.
+    page.select_option("#upload-source-type", "manual")
+    page.select_option("#upload-version", "v1")
+    page.select_option("#upload-functionality", "loan")
+    page.set_input_files(
+        "#file-input",
+        {"name": "guide.docx", "mimeType": "application/octet-stream", "buffer": docx_bytes("loan guide")},
+    )
+    page.wait_for_function("/Indexed/.test(document.querySelector('#upload-status').textContent)")
+    page.click("#open-docs-modal")
+    page.click('#docs-tbody [data-action="edit"]')
+    edit = page.locator("tr.edit-row")
+    assert edit.locator('[data-field="version"]').input_value() == "v1"
+    assert edit.locator('[data-field="version"] option').all_inner_texts()[-2:] == ["v1", "v2"]
+    edit.locator('[data-field="version"]').select_option("v2")
+    edit.locator('[data-action="save-edit"]').click()
+    page.wait_for_function("document.querySelector('tr.edit-row') === null")
+
+    response = page.request.get(f"{base_url}/docs")
+    assert response.json()["items"][0]["version"] == "v2"
