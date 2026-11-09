@@ -31,6 +31,17 @@ def _load_env_file(path: Path) -> None:
 
 _load_env_file(BASE_DIR / ".env")
 
+
+def env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Enables the Werkzeug debugger and auto-reloader for `python app.py`.
+FLASK_DEBUG = env_flag("FLASK_DEBUG")
+# Set this when the app is served over HTTPS. Browsers won't send a Secure
+# cookie over plain HTTP, so leaving it on locally would break admin login.
+SESSION_COOKIE_SECURE = env_flag("SESSION_COOKIE_SECURE")
+
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 INDEX_DIR = DATA_DIR / "index"
