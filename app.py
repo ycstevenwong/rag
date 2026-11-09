@@ -102,7 +102,8 @@ def _cleanup_orphan_uploads() -> int:
     removed = 0
     try:
         for f in cfg.UPLOAD_DIR.iterdir():
-            if not f.is_file():
+            # Uploads have generated names; dotfiles like .gitkeep aren't uploads.
+            if not f.is_file() or f.name.startswith("."):
                 continue
             try:
                 if f.stat().st_mtime < cutoff:
