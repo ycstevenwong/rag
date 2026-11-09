@@ -103,15 +103,31 @@ Filter semantics (`rag/retriever.py`):
 - Policy values can be a string (`"v2"`) or a list (`["v1","v2"]`) when a
   functionality genuinely supports both.
 
+Chat requires an app, because the app decides which versions apply. Without one the
+request gets a 400, and changing app in the UI starts a new conversation. Labels are
+compared ignoring case. New labels must come from the fixed lists below, but labels
+indexed before those lists existed keep working. Citations name the version, as in
+`loan_manual.pdf (v2), p.3`.
+
+If nothing is retrieved, the reply says so and the LLM isn't called.
+
 ### Config knobs
+
+Changes here need a restart, but not a re-ingest.
 
 ```python
 # config.py
-APP_CODES = ["auth-svc", "billing-svc"]
+APP_CODES = ["SG", "MY", "ID"]  # Singapore, Malaysia, Indonesia
+
+# Labels a new document can be given. Add a functionality to offer it, and add a
+# rule only if it needs a different version from "*".
+FUNCTIONALITIES = ["loan", "other"]
+VERSIONS = ["v1", "v2"]
 
 APP_VERSION_MAP = {
-    "auth-svc":    {"login": "v2", "token": "v1", "mfa": ["v1","v2"], "*": "v2"},
-    "billing-svc": {"*": "v1"},
+    "SG": {"loan": "v2", "*": "v1"},
+    "MY": {"*": "v2"},
+    "ID": {"*": "v1"},
 }
 
 DOCX_STOP_HEADINGS = [
