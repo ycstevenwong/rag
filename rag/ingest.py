@@ -77,7 +77,11 @@ class IngestPipeline:
                 return {"doc_id": existing_doc_id, "n_chunks": 0, "duplicate": True}
             doc = new_doc(file.file_id)
             self.vector_store.add_doc(doc)
-            self.vector_store.persist()
+            try:
+                self.vector_store.persist()
+            except BaseException:
+                self._undo_doc(doc.doc_id)
+                raise
             return {
                 "doc_id": doc.doc_id,
                 "n_chunks": file.n_chunks,
@@ -148,16 +152,32 @@ class IngestPipeline:
                 ))
                 doc = new_doc(file_id)
                 self.vector_store.add_doc(doc)
-                self.bm25_store.rebuild(
-                    (c.id, c.text) for c in self.vector_store.chunks
-                )
-                self.vector_store.persist()
+                try:
+                    self.bm25_store.rebuild(
+                        (c.id, c.text) for c in self.vector_store.chunks
+                    )
+                    self.vector_store.persist()
+                except BaseException:
+                    self._undo_doc(doc.doc_id)
+                    raise
                 result = {
                     "doc_id": doc.doc_id,
                     "n_chunks": len(records),
                     "duplicate": False,
                 }
         yield {"type": "done", "result": result}
+
+    def _undo_doc(self, doc_id: str) -> None:
+        """Take a doc whose commit failed back out of memory, so a later persist
+        can't write it. Also tries to bring the files back in line, since a failed
+        persist may have replaced some of them. If that fails too, the next load
+        reports the mismatch."""
+        self.vector_store.delete_doc(doc_id)
+        self.bm25_store.rebuild((c.id, c.text) for c in self.vector_store.chunks)
+        try:
+            self.vector_store.persist()
+        except OSError as exc:
+            print(f"[ingest] could not rewrite index after a failed commit: {exc}", flush=True)
 
     def delete(self, doc_id: str) -> int:
         with self._write_lock:
