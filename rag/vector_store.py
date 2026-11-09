@@ -56,6 +56,10 @@ class DocRecord:
     managed: bool = False
 
 
+class IndexIntegrityError(RuntimeError):
+    """The on-disk index files disagree and can't be used safely."""
+
+
 class FaissStore:
     def __init__(
         self,
@@ -96,7 +100,21 @@ class FaissStore:
             data = json.loads(self.docs_path.read_text(encoding="utf-8"))
             self.docs = [DocRecord(**d) for d in data]
 
+        self._check_alignment()
         self._rebuild_indices()
+
+    def _check_alignment(self) -> None:
+        """A vector's position must equal its chunk's list index. Files from an
+        interrupted persist can break that, and search would then silently
+        return the wrong chunks, so refuse to load them."""
+        n_vectors = self._index.ntotal if self._index is not None else 0
+        if n_vectors != len(self.chunks):
+            raise IndexIntegrityError(
+                f"Index files disagree: {self.vectors_path.name} has {n_vectors} vectors "
+                f"but {self.chunks_path.name} has {len(self.chunks)} chunks, probably from "
+                f"an interrupted write. Results would be wrong, so the index was not "
+                f"loaded. Delete the files in {self.vectors_path.parent} and re-ingest."
+            )
 
     def _rebuild_indices(self) -> None:
         self._file_by_id = {f.file_id: f for f in self.files}
