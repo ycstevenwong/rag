@@ -63,6 +63,8 @@ TOP_N_FINAL = int(os.getenv("TOP_N_FINAL", "10"))
 CONTEXT_TOKEN_BUDGET = int(os.getenv("CONTEXT_TOKEN_BUDGET", "16000"))
 
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
+# Published in this repo, so anyone can sign a session cookie with them.
+INSECURE_SECRET_KEYS = frozenset({"dev-secret-change-me", "change-me"})
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")

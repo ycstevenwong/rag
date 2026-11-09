@@ -43,7 +43,7 @@ def _record_login_failure(ip: str) -> None:
 
 
 def _is_admin() -> bool:
-    return bool(session.get("is_admin"))
+    return _admin_enabled() and bool(session.get("is_admin"))
 
 
 def _admin_enabled() -> bool:
@@ -93,6 +93,12 @@ def _cleanup_orphan_uploads() -> int:
 
 
 def create_app() -> Flask:
+    if _admin_enabled() and cfg.FLASK_SECRET_KEY in cfg.INSECURE_SECRET_KEYS:
+        raise RuntimeError(
+            "Admin login is configured but FLASK_SECRET_KEY is a published default, "
+            "so anyone could forge an admin session. Set FLASK_SECRET_KEY to a long "
+            "random value in .env."
+        )
     app = Flask(__name__, static_folder="static", template_folder="templates")
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_UPLOAD_MB * 1024 * 1024
