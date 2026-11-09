@@ -6,6 +6,7 @@ build citations later (page number, slide number, heading path, sheet name).
 """
 from __future__ import annotations
 
+import codecs
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -48,13 +49,28 @@ def _heading_path(stack: list[tuple[int, str]]) -> str:
 
 
 def parse_text(path: Path) -> list[Block]:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = _decode_text(path.read_bytes()).replace("\r\n", "\n").replace("\r", "\n")
     blocks: list[Block] = []
-    for para in text.split("\n\n"):
+    for para in re.split(r"\n[ \t]*\n", text):
         para = para.strip()
         if para:
             blocks.append(Block(text=para, kind="paragraph", meta={}))
     return blocks
+
+
+def _decode_text(data: bytes) -> str:
+    """A byte order mark names the encoding. Without one, try UTF-8, then assume
+    Windows-1252, the likeliest source of text that isn't valid UTF-8."""
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig", errors="replace")
+    if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return data.decode("utf-32", errors="replace")
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
 
 
 def parse_pdf(path: Path) -> list[Block]:
