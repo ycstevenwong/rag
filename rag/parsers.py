@@ -269,6 +269,8 @@ def _heading_level_from_size(size: float, body_size: float) -> int:
 
 def parse_docx(path: Path) -> list[Block]:
     from docx import Document
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
 
     from . import config_facade as cfg
 
@@ -277,16 +279,11 @@ def parse_docx(path: Path) -> list[Block]:
     heading_stack: list[str] = []  # [h1, h2, h3, ...]
     stop_keywords = [k.lower() for k in cfg.DOCX_STOP_HEADINGS if k.strip()]
 
-    para_map = {p._element: p for p in doc.paragraphs}
-    table_map = {t._element: t for t in doc.tables}
-
-    for child in doc.element.body.iterchildren():
-        tag = child.tag.split("}", 1)[-1]
+    for child in _docx_block_elements(doc.element.body):
+        tag = _xml_local_name(child)
 
         if tag == "p":
-            para = para_map.get(child)
-            if para is None:
-                continue
+            para = Paragraph(child, doc._body)
             text = (para.text or "").strip()
             if not text:
                 continue
@@ -318,20 +315,55 @@ def parse_docx(path: Path) -> list[Block]:
                 ))
 
         elif tag == "tbl":
-            table = table_map.get(child)
-            if table is None:
-                continue
-            for row in table.rows:
-                cells = [c.text.strip() for c in row.cells]
-                row_text = " | ".join(c for c in cells if c)
-                if row_text:
-                    blocks.append(Block(
-                        text=row_text,
-                        kind="table_row",
-                        meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
-                    ))
+            for row_text in _docx_table_rows(Table(child, doc._body)):
+                blocks.append(Block(
+                    text=row_text,
+                    kind="table_row",
+                    meta={"heading_path": " > ".join(heading_stack) if heading_stack else ""},
+                ))
 
     return blocks
+
+
+def _xml_local_name(element) -> str:
+    return element.tag.split("}", 1)[-1]
+
+
+def _docx_block_elements(parent):
+    """Paragraphs and tables in document order, including those inside content
+    controls. A generated table of contents is skipped: it only repeats headings."""
+    for child in parent.iterchildren():
+        if _xml_local_name(child) != "sdt":
+            yield child
+            continue
+        gallery = [
+            e.get(e.tag.split("}", 1)[0] + "}val", "")
+            for e in child.iter()
+            if _xml_local_name(e) == "docPartGallery"
+        ]
+        if any(value.startswith("Table of Contents") for value in gallery):
+            continue
+        for content in child:
+            if _xml_local_name(content) == "sdtContent":
+                yield from _docx_block_elements(content)
+
+
+def _docx_table_rows(table):
+    """One line per row, followed by the rows of any tables nested in its cells."""
+    for row in table.rows:
+        # row.cells repeats a merged cell once per column it spans.
+        cells = []
+        seen = set()
+        for cell in row.cells:
+            if id(cell._tc) not in seen:
+                seen.add(id(cell._tc))
+                cells.append(cell)
+        row_text = " | ".join(text for text in (c.text.strip() for c in cells) if text)
+        if row_text:
+            yield row_text
+        for cell in cells:
+            for nested in cell.tables:
+                yield from _docx_table_rows(nested)
 
 
 def parse_pptx(path: Path) -> list[Block]:
