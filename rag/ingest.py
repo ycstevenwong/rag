@@ -7,6 +7,7 @@ FileRecord — no re-parse, no re-embed.
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -32,6 +33,9 @@ class IngestPipeline:
         self.vector_store = vector_store
         self.bm25_store = bm25_store
         self.embedder = embedder
+        # Held across each multi-step change to the stores, never across a
+        # yield or an embedding call.
+        self._write_lock = threading.RLock()
 
     def ingest_stream(
         self,
@@ -52,39 +56,42 @@ class IngestPipeline:
         if source_type == "manual":
             app_code = ""
         sha = _sha256(file_path)
-        existing_file = self.vector_store.find_file_by_sha(sha)
 
-        if existing_file is not None:
-            existing_doc_id = self.vector_store.find_doc_by_meta(
-                existing_file.file_id, source_type, app_code, version, functionality
-            )
-            if existing_doc_id:
-                yield {"type": "done", "result": {
-                    "doc_id": existing_doc_id,
-                    "n_chunks": 0,
-                    "duplicate": True,
-                }}
-                return
-
-            yield {"type": "stage", "stage": "Linking existing file"}
-            doc_id = uuid.uuid4().hex
-            self.vector_store.add_doc(DocRecord(
-                doc_id=doc_id,
-                file_id=existing_file.file_id,
+        def new_doc(file_id: str) -> DocRecord:
+            return DocRecord(
+                doc_id=uuid.uuid4().hex,
+                file_id=file_id,
                 source_type=source_type,
                 tags=list(tags or []),
                 app_code=app_code,
                 version=version,
                 functionality=functionality,
                 managed=managed,
-            ))
+            )
+
+        def attach_to_existing_file(file: FileRecord) -> dict:
+            existing_doc_id = self.vector_store.find_doc_by_meta(
+                file.file_id, source_type, app_code, version, functionality
+            )
+            if existing_doc_id:
+                return {"doc_id": existing_doc_id, "n_chunks": 0, "duplicate": True}
+            doc = new_doc(file.file_id)
+            self.vector_store.add_doc(doc)
             self.vector_store.persist()
-            yield {"type": "done", "result": {
-                "doc_id": doc_id,
-                "n_chunks": existing_file.n_chunks,
+            return {
+                "doc_id": doc.doc_id,
+                "n_chunks": file.n_chunks,
                 "duplicate": False,
                 "linked": True,
-            }}
+            }
+
+        with self._write_lock:
+            existing_file = self.vector_store.find_file_by_sha(sha)
+            result = attach_to_existing_file(existing_file) if existing_file else None
+        if result is not None:
+            if result.get("linked"):
+                yield {"type": "stage", "stage": "Linking existing file"}
+            yield {"type": "done", "result": result}
             return
 
         yield {"type": "stage", "stage": "Parsing"}
@@ -101,21 +108,7 @@ class IngestPipeline:
         if not chunks:
             raise ValueError("Chunking produced no chunks.")
 
-        file_id = uuid.uuid4().hex
-        next_id = self.vector_store.next_chunk_id()
-        records: list[ChunkRecord] = []
-        embed_texts: list[str] = []
-        for i, c in enumerate(chunks):
-            rec_meta = dict(c.meta)
-            rec = ChunkRecord(
-                id=next_id + i,
-                file_id=file_id,
-                text=c.text,
-                token_count=c.token_count,
-                meta=rec_meta,
-            )
-            records.append(rec)
-            embed_texts.append(_text_for_embedding(c.text, rec_meta))
+        embed_texts = [_text_for_embedding(c.text, c.meta) for c in chunks]
 
         yield {"type": "stage", "stage": "Embedding"}
         batches: list[np.ndarray] = []
@@ -125,45 +118,58 @@ class IngestPipeline:
         vectors = np.vstack(batches)
 
         yield {"type": "stage", "stage": "Indexing"}
-        self.vector_store.add(vectors, records)
-        self.vector_store.add_file(FileRecord(
-            file_id=file_id,
-            sha256=sha,
-            filename=original_filename,
-            uploaded_at=time.time(),
-            n_chunks=len(records),
-        ))
-        doc_id = uuid.uuid4().hex
-        self.vector_store.add_doc(DocRecord(
-            doc_id=doc_id,
-            file_id=file_id,
-            source_type=source_type,
-            tags=list(tags or []),
-            app_code=app_code,
-            version=version,
-            functionality=functionality,
-            managed=managed,
-        ))
-        self.bm25_store.rebuild(
-            (c.id, c.text) for c in self.vector_store.chunks
-        )
-        self.vector_store.persist()
-        self.bm25_store.persist()
-        yield {"type": "done", "result": {
-            "doc_id": doc_id,
-            "n_chunks": len(records),
-            "duplicate": False,
-        }}
+        # Embedding can take minutes, so IDs are allocated here rather than
+        # before it, and the store is re-checked for a concurrent ingest of the
+        # same bytes that finished in the meantime.
+        with self._write_lock:
+            existing_file = self.vector_store.find_file_by_sha(sha)
+            if existing_file is not None:
+                result = attach_to_existing_file(existing_file)
+            else:
+                file_id = uuid.uuid4().hex
+                next_id = self.vector_store.next_chunk_id()
+                records = [
+                    ChunkRecord(
+                        id=next_id + i,
+                        file_id=file_id,
+                        text=c.text,
+                        token_count=c.token_count,
+                        meta=dict(c.meta),
+                    )
+                    for i, c in enumerate(chunks)
+                ]
+                self.vector_store.add(vectors, records)
+                self.vector_store.add_file(FileRecord(
+                    file_id=file_id,
+                    sha256=sha,
+                    filename=original_filename,
+                    uploaded_at=time.time(),
+                    n_chunks=len(records),
+                ))
+                doc = new_doc(file_id)
+                self.vector_store.add_doc(doc)
+                self.bm25_store.rebuild(
+                    (c.id, c.text) for c in self.vector_store.chunks
+                )
+                self.vector_store.persist()
+                self.bm25_store.persist()
+                result = {
+                    "doc_id": doc.doc_id,
+                    "n_chunks": len(records),
+                    "duplicate": False,
+                }
+        yield {"type": "done", "result": result}
 
     def delete(self, doc_id: str) -> int:
-        removed = self.vector_store.delete_doc(doc_id)
-        if removed:
-            self.bm25_store.rebuild(
-                (c.id, c.text) for c in self.vector_store.chunks
-            )
-            self.bm25_store.persist()
-        self.vector_store.persist()
-        return removed
+        with self._write_lock:
+            removed = self.vector_store.delete_doc(doc_id)
+            if removed:
+                self.bm25_store.rebuild(
+                    (c.id, c.text) for c in self.vector_store.chunks
+                )
+                self.bm25_store.persist()
+            self.vector_store.persist()
+            return removed
 
 
 def _sha256(path: Path) -> str:
