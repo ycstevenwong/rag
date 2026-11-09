@@ -213,16 +213,20 @@ class FaissStore:
             return removed
 
     def search(self, query_vec: np.ndarray, k: int) -> list[tuple[ChunkRecord, float]]:
-        if self._index is None or self._index.ntotal == 0:
-            return []
-        q = query_vec.reshape(1, -1).astype(np.float32, copy=False)
-        scores, ids = self._index.search(q, min(k, self._index.ntotal))
-        out: list[tuple[ChunkRecord, float]] = []
-        for idx, score in zip(ids[0], scores[0]):
-            if idx < 0 or idx >= len(self.chunks):
-                continue
-            out.append((self.chunks[idx], float(score)))
-        return out
+        # Held across the search and the position lookup: FAISS isn't safe to
+        # search during add(), and delete_doc() replaces the index and the chunk
+        # list, which must be read as a matching pair.
+        with self._lock:
+            if self._index is None or self._index.ntotal == 0:
+                return []
+            q = query_vec.reshape(1, -1).astype(np.float32, copy=False)
+            scores, ids = self._index.search(q, min(k, self._index.ntotal))
+            out: list[tuple[ChunkRecord, float]] = []
+            for idx, score in zip(ids[0], scores[0]):
+                if idx < 0 or idx >= len(self.chunks):
+                    continue
+                out.append((self.chunks[idx], float(score)))
+            return out
 
     def next_chunk_id(self) -> int:
         return (self.chunks[-1].id + 1) if self.chunks else 0
@@ -256,20 +260,21 @@ class FaissStore:
         """Return (kept_ids, stacked_vectors) for the given chunk_ids.
         Vectors are L2-normalized (FAISS IndexFlatIP stored them that way).
         Missing chunk_ids are silently dropped."""
-        if self._index is None or self._index.ntotal == 0 or not chunk_ids:
-            return [], np.zeros((0, self.dim or 0), dtype=np.float32)
-        position_by_id = {c.id: i for i, c in enumerate(self.chunks)}
-        kept: list[int] = []
-        positions: list[int] = []
-        for cid in chunk_ids:
-            pos = position_by_id.get(cid)
-            if pos is not None and pos < self._index.ntotal:
-                kept.append(cid)
-                positions.append(pos)
-        if not positions:
-            return [], np.zeros((0, self.dim or 0), dtype=np.float32)
-        vecs = np.stack([self._index.reconstruct(p) for p in positions]).astype(np.float32)
-        return kept, vecs
+        with self._lock:
+            if self._index is None or self._index.ntotal == 0 or not chunk_ids:
+                return [], np.zeros((0, self.dim or 0), dtype=np.float32)
+            position_by_id = {c.id: i for i, c in enumerate(self.chunks)}
+            kept: list[int] = []
+            positions: list[int] = []
+            for cid in chunk_ids:
+                pos = position_by_id.get(cid)
+                if pos is not None and pos < self._index.ntotal:
+                    kept.append(cid)
+                    positions.append(pos)
+            if not positions:
+                return [], np.zeros((0, self.dim or 0), dtype=np.float32)
+            vecs = np.stack([self._index.reconstruct(p) for p in positions]).astype(np.float32)
+            return kept, vecs
 
 
 def _replace_with_retry(tmp: str, dest: Path, attempts: int = 5) -> None:
