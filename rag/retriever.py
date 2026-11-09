@@ -51,10 +51,15 @@ class HybridRetriever:
             return []
 
         q_vec = self.embedder.encode_query(query)
-        fetch_mult = 3 if filters else 1
+        # Filters run after the searches, so a filtered query has to consider
+        # every chunk: its matches can rank anywhere. The loops below stop as soon
+        # as k_vector and k_bm25 matches are found.
+        n_chunks = len(self.vector_store.chunks)
+        fetch_vector = n_chunks if filters else k_vector
+        fetch_bm25 = n_chunks if filters else k_bm25
         with ThreadPoolExecutor(max_workers=2) as ex:
-            vec_future = ex.submit(self.vector_store.search, q_vec, k_vector * fetch_mult)
-            bm25_future = ex.submit(self.bm25_store.search, query, k_bm25 * fetch_mult)
+            vec_future = ex.submit(self.vector_store.search, q_vec, fetch_vector)
+            bm25_future = ex.submit(self.bm25_store.search, query, fetch_bm25)
             vec_results = vec_future.result()
             bm25_results = bm25_future.result()
 
