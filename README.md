@@ -425,6 +425,7 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 - `rag/vector_store.py` — `FileRecord` / `DocRecord` / `ChunkRecord` + FAISS
   with atomic persistence and in-memory lookup indices.
 - `rag/bm25_store.py` — in-memory BM25, rebuilt from chunks.
+- `rag/writer_lock.py` — OS lock that keeps a second process off the index.
 - `rag/retriever.py` — parallel hybrid search, RRF, metadata-aware filtering
   with auto-resolved version policy.
 - `rag/ingest.py` — orchestrates parse → chunk → embed → persist; emits per-batch
@@ -464,9 +465,26 @@ TOP_N_FINAL=6
 CONTEXT_TOKEN_BUDGET=16000
 
 # Flask
-FLASK_SECRET_KEY=change-me
+FLASK_SECRET_KEY=change-me   # must be private if admin login is on, or startup fails
 MAX_UPLOAD_MB=50
+FLASK_DEBUG=0                # 1 enables the debugger and auto-reload; local use only
+SESSION_COOKIE_SECURE=0      # 1 when served over HTTPS
+TRUSTED_PROXY_COUNT=0        # reverse proxies in front of the app, for the login limit
 ```
+
+### Index files and recovery
+
+`data/index/` holds `vectors.faiss`, `chunks.json`, `files.json`, `docs.json`,
+`index_meta.json` (next chunk ID) and `.lock`. `bm25.pkl` is no longer used, and any
+old copy can be deleted.
+
+If a crash leaves the vector and chunk counts different, startup stops with an
+error rather than returning wrong results. Delete the index files and re-ingest to
+recover.
+
+Chunking and parsing changes only affect newly ingested files. To apply them to
+existing documents, wipe the index and re-ingest: uploading the same bytes again
+reuses the existing chunks.
 
 `config.py` (not env-driven — edit code):
 
@@ -481,6 +499,7 @@ MAX_UPLOAD_MB=50
 pytest -q
 ```
 
-`test_retriever.py` requires FAISS and uses a stub embedder; no embedding
-endpoint hit. `test_chunker.py` and `test_parsers.py` have no external
-dependencies beyond the format-specific parser libraries.
+Tests use stub embedding and LLM endpoints and temporary data directories (see
+`tests/conftest.py`), so they need no running services and don't touch your index.
+`test_chat_js_render.py` runs the real renderer in Node and skips if Node isn't
+installed.
