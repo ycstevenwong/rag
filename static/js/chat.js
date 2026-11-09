@@ -760,6 +760,7 @@
       sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     } else if (evt.type === "sources") {
       currentSources = evt.sources || [];
+      assistantEl.citationSources = currentSources;
       renderRewrittenQuery(evt.rewritten_query);
       renderSources(currentSources);
     } else if (evt.type === "delta") {
@@ -799,6 +800,12 @@
   function attachCitationHandlers(root) {
     root.querySelectorAll(".citation").forEach((el) => {
       el.onclick = () => {
+        // The panel shows the latest turn; an older answer's [n] means that
+        // answer's sources, so bring those back before looking up the card.
+        if (root.citationSources && root.citationSources !== currentSources) {
+          currentSources = root.citationSources;
+          renderSources(currentSources);
+        }
         const n = parseInt(el.dataset.n, 10);
         const card = document.querySelector(`.source-card[data-n="${n}"]`);
         if (card) {

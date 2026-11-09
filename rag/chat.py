@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Iterator
@@ -28,6 +29,9 @@ History:
 Follow-up: {question}
 
 Standalone question:"""
+
+_CITATION_RE = re.compile(r"[ \t]*(?:\[\d+(?:,\s*\d+)*\])+")
+_CODE_SPAN_RE = re.compile(r"(```[\s\S]*?```|`[^`\n]+`)")
 
 
 class ChatService:
@@ -101,7 +105,9 @@ class ChatService:
 
     def _rewrite_query(self, provider: LLMProvider, history: list[dict], question: str) -> str:
         recent = history[-4:]
-        history_text = "\n".join(f"{m['role'].title()}: {m['content']}" for m in recent)
+        history_text = "\n".join(
+            f"{m['role'].title()}: {_strip_citations(m['content'])}" for m in recent
+        )
         prompt = REWRITE_PROMPT.format(history=history_text, question=question)
         try:
             return provider.complete(prompt, max_tokens=128).strip() or question
@@ -131,6 +137,16 @@ def _save_session(session_id: str, history: list[dict]) -> None:
     p.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _strip_citations(text: str) -> str:
+    """Remove [n] markers, leaving code spans alone. An earlier answer's numbers
+    refer to that turn's sources and would collide with the current turn's."""
+    parts = _CODE_SPAN_RE.split(text)
+    # re.split with a capture group puts the code spans at the odd indexes.
+    return "".join(
+        part if i % 2 else _CITATION_RE.sub("", part) for i, part in enumerate(parts)
+    )
+
+
 def _trim_history(history: list[dict], max_turns: int) -> list[dict]:
     trimmed = history[-(max_turns * 2):]
-    return [{"role": m["role"], "content": m["content"]} for m in trimmed]
+    return [{"role": m["role"], "content": _strip_citations(m["content"])} for m in trimmed]
