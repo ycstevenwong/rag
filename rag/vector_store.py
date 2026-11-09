@@ -78,6 +78,7 @@ class FaissStore:
         self.docs: list[DocRecord] = []
         self.files: list[FileRecord] = []
         self._index = None
+        self._chunk_by_id: dict[int, ChunkRecord] = {}
         self._file_by_id: dict[str, FileRecord] = {}
         self._file_by_sha: dict[str, FileRecord] = {}
         self._docs_by_file: dict[str, list[DocRecord]] = {}
@@ -117,11 +118,20 @@ class FaissStore:
             )
 
     def _rebuild_indices(self) -> None:
+        self._index_chunks()
         self._file_by_id = {f.file_id: f for f in self.files}
         self._file_by_sha = {f.sha256: f for f in self.files}
         self._docs_by_file = {}
         for d in self.docs:
             self._docs_by_file.setdefault(d.file_id, []).append(d)
+
+    def _index_chunks(self) -> None:
+        # A new dict, swapped in whole, so an unlocked get_chunk sees one or the
+        # other. If an old index has duplicate IDs, the first keeps winning.
+        by_id: dict[int, ChunkRecord] = {}
+        for c in self.chunks:
+            by_id.setdefault(c.id, c)
+        self._chunk_by_id = by_id
 
     def add(self, vectors: np.ndarray, records: list[ChunkRecord]) -> None:
         import faiss
@@ -133,6 +143,8 @@ class FaissStore:
                 self._index = faiss.IndexFlatIP(self.dim)
             self._index.add(vectors)
             self.chunks.extend(records)
+            for r in records:
+                self._chunk_by_id.setdefault(r.id, r)
 
     def add_file(self, file: FileRecord) -> None:
         with self._lock:
@@ -204,6 +216,7 @@ class FaissStore:
                 new_index.add(kept)
             self._index = new_index
             self.chunks = keep_chunks
+            self._index_chunks()
             file_to_remove = self._file_by_id.get(file_id)
             self.files = [f for f in self.files if f.file_id != file_id]
             self._file_by_id.pop(file_id, None)
@@ -251,10 +264,7 @@ class FaissStore:
             )
 
     def get_chunk(self, chunk_id: int) -> ChunkRecord | None:
-        for c in self.chunks:
-            if c.id == chunk_id:
-                return c
-        return None
+        return self._chunk_by_id.get(chunk_id)
 
     def get_vectors(self, chunk_ids: list[int]) -> tuple[list[int], np.ndarray]:
         """Return (kept_ids, stacked_vectors) for the given chunk_ids.
