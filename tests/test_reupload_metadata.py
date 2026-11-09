@@ -13,7 +13,7 @@ from rag.ingest import IngestPipeline
 from rag.retriever import HybridRetriever
 from rag.vector_store import DocRecord, FaissStore
 
-from .conftest import StubEmbedder
+from .conftest import StubEmbedder, docx_bytes
 
 
 def _open_store(root) -> FaissStore:
@@ -87,11 +87,12 @@ def test_doc_list_shows_each_docs_own_filename(flask_app, monkeypatch):
     client = flask_app.test_client()
     with client.session_transaction() as session:
         session["is_admin"] = True
-    for name, version in (("one.txt", "v1"), ("two.txt", "v2")):
+    same_bytes = docx_bytes("same bytes")
+    for name, version in (("one.docx", "v1"), ("two.docx", "v2")):
         client.post(
             "/upload",
             data={
-                "file": (io.BytesIO(b"same bytes"), name),
+                "file": (io.BytesIO(same_bytes), name),
                 "source_type": "other",
                 "version": version,
             },
@@ -100,7 +101,7 @@ def test_doc_list_shows_each_docs_own_filename(flask_app, monkeypatch):
 
     items = client.get("/docs").json["items"]
 
-    assert {i["version"]: i["filename"] for i in items} == {"v1": "one.txt", "v2": "two.txt"}
+    assert {i["version"]: i["filename"] for i in items} == {"v1": "one.docx", "v2": "two.docx"}
 
 
 def test_docs_json_without_filename_still_loads_and_falls_back(tmp_path, pipeline, doc_path):

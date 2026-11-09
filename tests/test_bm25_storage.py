@@ -7,6 +7,8 @@ import config
 from rag.bm25_store import BM25Store
 from rag.vector_store import ChunkRecord
 
+from .conftest import docx_bytes
+
 
 class _WritesSentinelWhenUnpickled:
     def __init__(self, sentinel: str):
@@ -52,7 +54,7 @@ def test_ingest_writes_no_bm25_file(client, flask_app, app_module, data_dirs, mo
 
     response = client.post(
         "/upload",
-        data={"file": (io.BytesIO(b"alpha bravo"), "a.txt"), "source_type": "other"},
+        data={"file": (io.BytesIO(docx_bytes("alpha bravo")), "a.docx"), "source_type": "other"},
         content_type="multipart/form-data",
     )
 

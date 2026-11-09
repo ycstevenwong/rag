@@ -9,6 +9,8 @@ import requests
 
 import config
 
+from .conftest import docx_bytes
+
 
 @pytest.fixture
 def admin(flask_app, monkeypatch):
@@ -20,7 +22,10 @@ def admin(flask_app, monkeypatch):
     return client
 
 
-def _queue_upload(client, name: str = "doc.txt", body: bytes = b"alpha bravo charlie") -> str:
+DOC = docx_bytes("alpha bravo charlie")
+
+
+def _queue_upload(client, name: str = "doc.docx", body: bytes = DOC) -> str:
     response = client.post(
         "/upload",
         data={"file": (io.BytesIO(body), name), "source_type": "other"},
@@ -63,7 +68,7 @@ def test_failed_approval_keeps_the_item_and_its_file(admin, client, app_module, 
 
     assert events[-1] == {"type": "error", "error": "embedding endpoint down"}
     assert _pending_ids(admin) == [pending_id]
-    assert (config.PENDING_DIR / f"{pending_id}.txt").read_bytes() == b"alpha bravo charlie"
+    assert (config.PENDING_DIR / f"{pending_id}.docx").read_bytes() == DOC
 
 
 def test_failed_approval_can_be_retried(admin, client, app_module, monkeypatch):

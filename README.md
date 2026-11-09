@@ -15,7 +15,7 @@ endpoints called over HTTP.
 | Vector index   | FAISS (`IndexFlatIP`, cosine via normalized vectors)        |
 | Keyword index  | `rank_bm25` BM25Okapi                                       |
 | Fusion         | Reciprocal Rank Fusion (no extra deps)                      |
-| Docs           | PDF (PyMuPDF), DOCX (python-docx), PPTX (python-pptx), XLSX (openpyxl), TXT/MD |
+| Docs           | PDF (PyMuPDF) and DOCX (python-docx) only                   |
 | Persistence    | Plain files under `data/` — no database                     |
 
 ## Quick start
@@ -130,7 +130,7 @@ boilerplate.
 
 `scripts/ingest_corpus.py` is the canonical path for adding curated content
 (manuals, specs). It walks a directory tree, parses each supported file
-(`.pdf .docx .pptx .xlsx .txt .md`), and pushes the chunks through the same
+(`.pdf .docx`), and pushes the chunks through the same
 pipeline the UI uploader uses — but with full metadata derived from the folder
 or filename convention, and the `managed=True` flag so the docs are locked
 from UI deletion.

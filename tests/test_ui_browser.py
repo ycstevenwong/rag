@@ -14,6 +14,8 @@ from werkzeug.serving import make_server
 
 import config
 
+from .conftest import docx_bytes
+
 sync_api = pytest.importorskip("playwright.sync_api")
 
 _PASSWORD = "test-password"
@@ -107,7 +109,7 @@ def _ask(page, question: str, nth_answer: int) -> None:
 
 def test_old_citation_restores_that_answers_search_query(live_app, page):
     app, base_url = live_app
-    _upload(app, "zebra.txt", b"zebra quota limit is 500")
+    _upload(app, "zebra.docx", docx_bytes("zebra quota limit is 500"))
     _open(page, base_url)
     _ask(page, "zebra quota", 1)
     _ask(page, "a follow-up", 2)  # StubLLM rewrites this to "standalone question"

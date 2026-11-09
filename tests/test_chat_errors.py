@@ -8,6 +8,8 @@ import requests
 
 import config
 
+from .conftest import docx_bytes
+
 
 def _events(response) -> list[dict]:
     lines = response.get_data(as_text=True).splitlines()
@@ -26,7 +28,7 @@ def indexed_client(flask_app, app_module, monkeypatch):
         session["is_admin"] = True
     client.post(
         "/upload",
-        data={"file": (io.BytesIO(b"alpha bravo charlie"), "a.txt"), "source_type": "other"},
+        data={"file": (io.BytesIO(docx_bytes("alpha bravo charlie")), "a.docx"), "source_type": "other"},
         content_type="multipart/form-data",
     ).get_data()
     return client

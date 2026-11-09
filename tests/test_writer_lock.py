@@ -11,6 +11,8 @@ import pytest
 import config
 from rag.writer_lock import WriterLockHeld, acquire_writer_lock
 
+from .conftest import pdf_bytes
+
 ROOT = Path(__file__).resolve().parent.parent
 
 _HOLDER = """
@@ -104,8 +106,8 @@ def _load_script(name: str):
 
 def test_ingest_script_exits_when_lock_is_held(data_dirs, lock_holder, monkeypatch, tmp_path, capsys):
     lock_holder(data_dirs["INDEX_DIR"] / ".lock")
-    doc = tmp_path / "doc.txt"
-    doc.write_text("alpha bravo")
+    doc = tmp_path / "doc.pdf"
+    doc.write_bytes(pdf_bytes("alpha bravo"))
     script = _load_script("ingest_corpus")
     monkeypatch.setattr(sys, "argv", ["ingest_corpus.py", str(doc)])
 

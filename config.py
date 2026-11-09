@@ -80,6 +80,8 @@ FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
 # Published in this repo, so anyone can sign a session cookie with them.
 INSECURE_SECRET_KEYS = frozenset({"dev-secret-change-me", "change-me"})
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
+# Document types that can enter the index, through the UI or the bulk script.
+ALLOWED_EXTENSIONS = (".pdf", ".docx")
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")

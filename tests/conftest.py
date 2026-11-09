@@ -6,6 +6,7 @@ anything imports it. Nothing here talks to a real embedding or LLM endpoint.
 """
 from __future__ import annotations
 
+import io
 import tempfile
 from pathlib import Path
 
@@ -123,3 +124,22 @@ def flask_app(app_module):
 @pytest.fixture
 def client(flask_app):
     return flask_app.test_client()
+
+
+def docx_bytes(text: str) -> bytes:
+    import docx
+
+    document = docx.Document()
+    for paragraph in text.split("\n\n"):
+        document.add_paragraph(paragraph)
+    buffer = io.BytesIO()
+    document.save(buffer)
+    return buffer.getvalue()
+
+
+def pdf_bytes(text: str) -> bytes:
+    import pymupdf
+
+    document = pymupdf.open()
+    document.new_page().insert_textbox(pymupdf.Rect(72, 72, 520, 760), text, fontsize=11)
+    return document.tobytes()

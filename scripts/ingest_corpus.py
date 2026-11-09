@@ -75,7 +75,6 @@ from rag.vector_store import FaissStore
 from rag.writer_lock import WriterLockHeld, acquire_writer_lock
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
 DEFAULT_CORPUS_DIR = ROOT / "data" / "corpus"
 KNOWN_SOURCE_TYPES = {"manual", "spec", "other"}
 VERSION_RE = re.compile(r"^v\d+$", re.IGNORECASE)
@@ -83,11 +82,11 @@ VERSION_RE = re.compile(r"^v\d+$", re.IGNORECASE)
 
 def collect_files(path: Path) -> list[Path]:
     if path.is_file():
-        return [path] if path.suffix.lower() in ALLOWED_EXTENSIONS else []
+        return [path] if path.suffix.lower() in cfg.ALLOWED_EXTENSIONS else []
     if path.is_dir():
         return sorted(
             p for p in path.rglob("*")
-            if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS
+            if p.is_file() and p.suffix.lower() in cfg.ALLOWED_EXTENSIONS
         )
     return []
 

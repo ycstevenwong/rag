@@ -8,6 +8,8 @@ import pytest
 
 import config
 
+from .conftest import docx_bytes
+
 
 @pytest.fixture
 def admin(flask_app, monkeypatch):
@@ -18,7 +20,7 @@ def admin(flask_app, monkeypatch):
         session["is_admin"] = True
     client.post(
         "/upload",
-        data={"file": (io.BytesIO(b"managed secret text"), "a.txt"), "source_type": "other"},
+        data={"file": (io.BytesIO(docx_bytes("managed secret text")), "a.docx"), "source_type": "other"},
         content_type="multipart/form-data",
     ).get_data()
     return client

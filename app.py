@@ -28,8 +28,6 @@ from rag.retriever import HybridRetriever
 from rag.vector_store import FaissStore
 from rag.writer_lock import acquire_writer_lock
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
-
 # These characters map to a file name unchanged, so two IDs can't share a file.
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
@@ -193,16 +191,13 @@ def create_app() -> Flask:
         if not f.filename:
             return jsonify({"error": "Empty filename"}), 400
         ext = Path(f.filename).suffix.lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            hint = ""
-            if ext == ".doc":
-                hint = " Open the file in Word and save as .docx, then re-upload."
-            elif ext == ".rtf":
-                hint = " Convert to .docx or .txt first."
-            elif ext in (".xls", ".ppt"):
-                modern = ".xlsx" if ext == ".xls" else ".pptx"
-                hint = f" Open the file and save as {modern}, then re-upload."
-            supported = ", ".join(sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS))
+        if ext not in cfg.ALLOWED_EXTENSIONS:
+            hint = (
+                " Open the file in Word and save as .docx, then re-upload."
+                if ext == ".doc"
+                else " Convert to .docx or .pdf first."
+            )
+            supported = ", ".join(sorted(e.lstrip(".") for e in cfg.ALLOWED_EXTENSIONS))
             return jsonify({
                 "error": f"Unsupported extension {ext}. Supported: {supported}.{hint}",
             }), 400
