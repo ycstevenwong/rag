@@ -4,20 +4,27 @@ from __future__ import annotations
 import pytest
 
 from rag import config_facade
-from rag.chat import ChatService, _append_to_session
+from rag.chat import SYSTEM_PROMPT, ChatService, _append_to_session
 from rag.chunker import count_tokens
+from rag.retriever import RetrievedChunk
+from rag.vector_store import ChunkRecord
 
 from .conftest import StubLLM
 
 
-class _NoDocuments:
+class _OneDocument:
     def search(self, _query, **_kwargs):
-        return []
+        chunk = ChunkRecord(1, "f", "short fact", 2)
+        return [RetrievedChunk(chunk, 0.1, 0, 0, "a.pdf")]
+
+
+# The system prompt plus about 25 tokens for the question and its one-source context.
+_OVERHEAD = count_tokens(SYSTEM_PROMPT) + 25
 
 
 @pytest.fixture
 def service(data_dirs):
-    chat = ChatService(_NoDocuments())
+    chat = ChatService(_OneDocument())
     chat._provider = StubLLM()
     return chat
 
@@ -36,8 +43,8 @@ def _history_sent(service, question: str = "now") -> list[str]:
 
 
 def test_oldest_turns_are_dropped_to_fit_the_budget(service, monkeypatch):
-    # About 140 for the system prompt and question leaves room for two 200-token turns.
-    monkeypatch.setattr(config_facade, "CONTEXT_TOKEN_BUDGET", 550)
+    # Room for two 200-token turns but not three.
+    monkeypatch.setattr(config_facade, "CONTEXT_TOKEN_BUDGET", _OVERHEAD + 450)
     _seed_turns("s", 5)
 
     assert _history_sent(service) == ["q3", "a3", "q4", "a4"]
@@ -65,8 +72,8 @@ def test_no_history_is_sent_when_the_current_message_uses_the_budget(service, mo
 
 
 def test_turns_are_never_split(service, monkeypatch):
-    """About 160 tokens remain: room for one 100-token message, but not its pair."""
-    monkeypatch.setattr(config_facade, "CONTEXT_TOKEN_BUDGET", 300)
+    """Room for one 100-token message, but not its pair."""
+    monkeypatch.setattr(config_facade, "CONTEXT_TOKEN_BUDGET", _OVERHEAD + 150)
     _seed_turns("s", 1)
 
     assert _history_sent(service) == []

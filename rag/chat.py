@@ -33,6 +33,8 @@ Follow-up: {question}
 
 Standalone question:"""
 
+NO_SOURCES_REPLY = "I couldn't find anything about that in the documents for this app."
+
 _CITATION_RE = re.compile(r"[ \t]*(?:\[\d+(?:,\s*\d+)*\])+")
 _CODE_SPAN_RE = re.compile(r"(```[\s\S]*?```|`[^`\n]+`)")
 
@@ -83,28 +85,28 @@ class ChatService:
 
         yield {"type": "sources", "sources": sources, "rewritten_query": standalone_query}
 
-        user_message = (
-            f"Context:\n{context_text}\n\nQuestion: {question}"
-            if context_text
-            else f"No retrieved context is available. Answer based only on what the user has said.\n\nQuestion: {question}"
-        )
-
-        history_budget = (
-            cfg.CONTEXT_TOKEN_BUDGET - count_tokens(SYSTEM_PROMPT) - count_tokens(user_message)
-        )
-        messages = [
-            *_trim_history(history, max_turns=8, token_budget=history_budget),
-            {"role": "user", "content": user_message},
-        ]
-
         full_reply: list[str] = []
-        try:
-            for delta in provider.stream_chat(SYSTEM_PROMPT, messages):
-                full_reply.append(delta)
-                yield {"type": "delta", "text": delta}
-        except Exception as exc:
-            yield {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
-            return
+        if not sources:
+            # Nothing to answer from. The model would otherwise answer from its own
+            # knowledge, which could contradict the documents for this app.
+            full_reply.append(NO_SOURCES_REPLY)
+            yield {"type": "delta", "text": NO_SOURCES_REPLY}
+        else:
+            user_message = f"Context:\n{context_text}\n\nQuestion: {question}"
+            history_budget = (
+                cfg.CONTEXT_TOKEN_BUDGET - count_tokens(SYSTEM_PROMPT) - count_tokens(user_message)
+            )
+            messages = [
+                *_trim_history(history, max_turns=8, token_budget=history_budget),
+                {"role": "user", "content": user_message},
+            ]
+            try:
+                for delta in provider.stream_chat(SYSTEM_PROMPT, messages):
+                    full_reply.append(delta)
+                    yield {"type": "delta", "text": delta}
+            except Exception as exc:
+                yield {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
+                return
 
         assistant_text = "".join(full_reply)
         try:
