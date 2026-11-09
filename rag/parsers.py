@@ -101,11 +101,6 @@ def parse_pdf(path: Path) -> list[Block]:
         top_repeats, bot_repeats = _find_repeating_lines(pages_text, min_frac=0.5)
         repeating = top_repeats | bot_repeats
 
-        def is_repeating(text: str) -> bool:
-            if not repeating:
-                return False
-            return re.sub(r"\d+", "#", text.strip()) in repeating
-
         # Estimate the document's body font size. If we can't, fall back.
         body_size = _estimate_body_font_size(doc)
         if body_size is None:
@@ -155,6 +150,10 @@ def parse_pdf(path: Path) -> list[Block]:
                 for line in blk.get("lines", []):
                     spans = line.get("spans", [])
                     line_text = "".join(s.get("text", "") for s in spans).strip()
+                    # Per line, because a block can join a repeated line with
+                    # others (a two-line footer, say).
+                    if _is_repeated_line(line_text, repeating):
+                        continue
                     if line_text:
                         texts.append(line_text)
                     for s in spans:
@@ -163,7 +162,7 @@ def parse_pdf(path: Path) -> list[Block]:
                             sizes.append(sz)
                         span_fonts.append((sz or 0.0, s.get("font") or ""))
                 text = " ".join(texts).strip()
-                if not text or is_repeating(text):
+                if not text:
                     continue
                 max_size = max(sizes) if sizes else body_size
                 if max_font and max_size >= max_font:
@@ -425,34 +424,50 @@ def _split_paragraphs(text: str) -> list[str]:
     return parts
 
 
+def _mask_digits(line: str) -> str:
+    return re.sub(r"\d+", "#", line)
+
+
+# After _mask_digits: "#", "Page #", "Acme Corp Page #", "# of #", "Page # / #".
+_PAGE_NUMBER_LINE_RE = re.compile(r"(?:^|\bpage\s+)#(?:\s*(?:of|/)\s*#)?$", re.IGNORECASE)
+
+
 def _find_repeating_lines(
     pages_text: list[str], min_frac: float = 0.5
 ) -> tuple[set[str], set[str]]:
-    """Identify digit-normalized header/footer lines that recur on most pages.
+    """Identify header/footer lines that recur on most pages.
 
-    Returns (top_repeats, bot_repeats) — sets of digit-normalized strings.
-    Needs at least 3 pages to engage; returns (set(), set()) otherwise.
+    A line qualifies if it repeats exactly, or if its digits vary and it reads as
+    a page number. Other lines with varying digits ("Chapter 3", "Step 2 ...") are
+    content, even when they sit at the top of most pages.
+
+    Returns (top_repeats, bot_repeats) for use with _is_repeated_line. Needs at
+    least 3 pages to engage; returns (set(), set()) otherwise.
     """
     if len(pages_text) < 3:
         return set(), set()
-
-    def norm(line: str) -> str:
-        return re.sub(r"\d+", "#", line.strip())
 
     page_lines = [p.splitlines() for p in pages_text]
     top_counts: Counter[str] = Counter()
     bot_counts: Counter[str] = Counter()
     for lines in page_lines:
-        non_empty = [l for l in lines if l.strip()]
-        for l in non_empty[:2]:
-            top_counts[norm(l)] += 1
-        for l in non_empty[-2:]:
-            bot_counts[norm(l)] += 1
+        non_empty = [l.strip() for l in lines if l.strip()]
+        for counts, edge in ((top_counts, non_empty[:2]), (bot_counts, non_empty[-2:])):
+            for line in edge:
+                counts[line] += 1
+                digits_masked = _mask_digits(line)
+                if digits_masked != line and _PAGE_NUMBER_LINE_RE.search(digits_masked):
+                    counts[digits_masked] += 1
 
     threshold = max(2, int(min_frac * len(pages_text)))
     top_repeats = {k for k, v in top_counts.items() if v >= threshold}
     bot_repeats = {k for k, v in bot_counts.items() if v >= threshold}
     return top_repeats, bot_repeats
+
+
+def _is_repeated_line(line: str, repeating: set[str]) -> bool:
+    line = line.strip()
+    return line in repeating or _mask_digits(line) in repeating
 
 
 def _strip_repeating_lines(pages_text: list[str], min_frac: float = 0.5) -> list[str]:
@@ -461,16 +476,13 @@ def _strip_repeating_lines(pages_text: list[str], min_frac: float = 0.5) -> list
     if not top_repeats and not bot_repeats:
         return pages_text
 
-    def norm(line: str) -> str:
-        return re.sub(r"\d+", "#", line.strip())
-
     page_lines = [p.splitlines() for p in pages_text]
     cleaned: list[str] = []
     for lines in page_lines:
         i, j = 0, len(lines)
-        while i < j and (not lines[i].strip() or norm(lines[i]) in top_repeats):
+        while i < j and (not lines[i].strip() or _is_repeated_line(lines[i], top_repeats)):
             i += 1
-        while j > i and (not lines[j - 1].strip() or norm(lines[j - 1]) in bot_repeats):
+        while j > i and (not lines[j - 1].strip() or _is_repeated_line(lines[j - 1], bot_repeats)):
             j -= 1
         cleaned.append("\n".join(lines[i:j]))
     return cleaned

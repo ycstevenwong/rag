@@ -35,6 +35,7 @@ from rag.parsers import (  # noqa: E402
     _estimate_body_font_size,
     _find_repeating_lines,
     _heading_level_from_size,
+    _is_repeated_line,
 )
 
 
@@ -311,12 +312,6 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False, find: str | N
         per_page: dict[int, dict[str, int]] = {}
         repeating = top_repeats | bot_repeats
 
-        def is_repeating(text: str) -> bool:
-            if not repeating:
-                return False
-            import re
-            return re.sub(r"\d+", "#", text.strip()) in repeating
-
         for page_num, page in enumerate(doc, start=1):
             per_page.setdefault(page_num, {"blocks": 0, "headings": 0, "paragraphs": 0})
             try:
@@ -331,6 +326,8 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False, find: str | N
                 for line in blk.get("lines", []):
                     spans = line.get("spans", [])
                     line_text = "".join(s.get("text", "") for s in spans).strip()
+                    if _is_repeated_line(line_text, repeating):
+                        continue
                     if line_text:
                         texts.append(line_text)
                     for s in spans:
@@ -338,7 +335,7 @@ def inspect(pdf_path: Path, max_headings: int, full: bool = False, find: str | N
                         if sz:
                             sizes.append(sz)
                 text = " ".join(texts).strip()
-                if not text or is_repeating(text):
+                if not text:
                     continue
                 n_blocks += 1
                 per_page[page_num]["blocks"] += 1
