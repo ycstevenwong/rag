@@ -123,14 +123,15 @@ class HybridRetriever:
             if chunk is None:
                 continue
             file = self.vector_store.get_file(chunk.file_id)
-            filename = file.filename if file else ""
+            doc = matching_doc.get(cid)
+            filename = (doc.filename if doc else "") or (file.filename if file else "")
             out.append(RetrievedChunk(
                 chunk=chunk,
                 score=fused_score_by_id.get(cid, 0.0),
                 vector_rank=vec_ranks.get(cid),
                 bm25_rank=bm25_ranks.get(cid),
                 filename=filename,
-                doc=matching_doc.get(cid),
+                doc=doc,
             ))
         return out
 

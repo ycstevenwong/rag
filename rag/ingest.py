@@ -67,13 +67,27 @@ class IngestPipeline:
                 version=version,
                 functionality=functionality,
                 managed=managed,
+                filename=original_filename,
             )
+
+        def merge_tags(doc_id: str) -> None:
+            doc = next(d for d in self.vector_store.docs if d.doc_id == doc_id)
+            new_tags = [t for t in dict.fromkeys(tags or []) if t not in doc.tags]
+            if not new_tags:
+                return
+            doc.tags.extend(new_tags)
+            try:
+                self.vector_store.persist()
+            except BaseException:
+                del doc.tags[-len(new_tags):]
+                raise
 
         def attach_to_existing_file(file: FileRecord) -> dict:
             existing_doc_id = self.vector_store.find_doc_by_meta(
                 file.file_id, source_type, app_code, version, functionality
             )
             if existing_doc_id:
+                merge_tags(existing_doc_id)
                 return {"doc_id": existing_doc_id, "n_chunks": 0, "duplicate": True}
             doc = new_doc(file.file_id)
             self.vector_store.add_doc(doc)

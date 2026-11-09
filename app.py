@@ -174,7 +174,7 @@ def create_app() -> Flask:
             f = vector_store.get_file(d.file_id)
             entry = asdict(d)
             if f is not None:
-                entry["filename"] = f.filename
+                entry["filename"] = d.filename or f.filename
                 entry["n_chunks"] = f.n_chunks
                 entry["uploaded_at"] = f.uploaded_at
             else:

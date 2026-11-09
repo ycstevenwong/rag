@@ -58,6 +58,9 @@ class DocRecord:
     version: str = ""
     functionality: str = ""
     managed: bool = False
+    # The name this doc was uploaded under, which can differ between docs sharing a
+    # file. Empty on docs from before this field existed: use FileRecord.filename.
+    filename: str = ""
 
 
 class IndexIntegrityError(RuntimeError):
