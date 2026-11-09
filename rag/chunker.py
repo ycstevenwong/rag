@@ -173,11 +173,7 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
     for i in range(1, len(chunks)):
         prev = chunks[i - 1]
         cur = chunks[i]
-        # Skip overlap when either side is a screen chunk. The tail of a
-        # screen mockup is a column-aligned fragment that carries no useful
-        # continuity, and prepending prose overlap onto a screen would break
-        # the screen's alignment. Screens are atomic units, no overlap.
-        if prev.meta.get("contains_screen") or cur.meta.get("contains_screen"):
+        if not _overlap_allowed(prev.meta, cur.meta):
             out.append(cur)
             continue
         tail = _tail_at_boundary(prev.text, overlap_tokens * 4)
@@ -185,9 +181,32 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
         out.append(Chunk(
             text=new_text,
             token_count=count_tokens(new_text),
-            meta=cur.meta,
+            meta=_meta_with_overlap(prev.meta, cur.meta),
         ))
     return out
+
+
+def _overlap_allowed(prev: dict[str, Any], cur: dict[str, Any]) -> bool:
+    # The tail of a screen mockup is a column-aligned fragment with no useful
+    # continuity, and prose prepended to a screen would break its alignment.
+    if prev.get("contains_screen") or cur.get("contains_screen"):
+        return False
+    # Overlap text is cited with the current chunk's locator, so it mustn't come
+    # from a place that locator can't name.
+    return all(prev.get(key) == cur.get(key) for key in ("heading_path", "slide_nums", "sheets"))
+
+
+def _meta_with_overlap(prev: dict[str, Any], cur: dict[str, Any]) -> dict[str, Any]:
+    """The chunk now holds text from `prev`, so its citation has to cover it."""
+    meta = dict(cur)
+    if prev.get("pages") and cur.get("pages"):
+        meta["pages"] = sorted({*prev["pages"], *cur["pages"]})
+    if prev.get("row_range") and cur.get("row_range"):
+        meta["row_range"] = [
+            min(prev["row_range"][0], cur["row_range"][0]),
+            max(prev["row_range"][1], cur["row_range"][1]),
+        ]
+    return meta
 
 
 def _tail_at_boundary(text: str, max_chars: int) -> str:

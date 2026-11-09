@@ -43,7 +43,8 @@ python app.py
 2. **Chunk** the block stream into ~600-token chunks with 80-token overlap.
    Page and slide boundaries are respected; heading paths are prepended to the
    embedded text. Overlap snaps to paragraph → sentence → word boundaries so
-   chunks never start mid-word.
+   chunks never start mid-word. It stays within a section, slide and sheet; across
+   a page break in one section it's kept and the citation widens to both pages.
 3. **Embed** chunks via `POST {EMBEDDING_BASE_URL}/v1/embeddings` (OpenAI shape:
    `model`, `input`, `encoding_format`, `input_type`). Vectors are L2-normalized
    and appended to a FAISS `IndexFlatIP`. Chunk text and metadata persist to
