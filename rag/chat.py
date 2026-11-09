@@ -53,24 +53,28 @@ class ChatService:
         """Yield events: {"type": "sources", "sources": [...]} then
         {"type": "delta", "text": "..."} chunks, then {"type": "done"}.
         """
-        history = _load_session(session_id)
-        provider = self._get_provider()
+        try:
+            history = _load_session(session_id)
+            provider = self._get_provider()
 
-        standalone_query = question
-        if history:
-            standalone_query = self._rewrite_query(provider, history, question)
+            standalone_query = question
+            if history:
+                standalone_query = self._rewrite_query(provider, history, question)
 
-        retrieved = self.retriever.search(
-            standalone_query,
-            k_vector=cfg.TOP_K_VECTOR,
-            k_bm25=cfg.TOP_K_BM25,
-            top_n=cfg.TOP_N_FINAL,
-            filters=filters,
-        )
+            retrieved = self.retriever.search(
+                standalone_query,
+                k_vector=cfg.TOP_K_VECTOR,
+                k_bm25=cfg.TOP_K_BM25,
+                top_n=cfg.TOP_N_FINAL,
+                filters=filters,
+            )
 
-        context_text, sources = build_context_block(
-            retrieved, token_budget=cfg.CONTEXT_TOKEN_BUDGET
-        )
+            context_text, sources = build_context_block(
+                retrieved, token_budget=cfg.CONTEXT_TOKEN_BUDGET
+            )
+        except Exception as exc:
+            yield {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
+            return
 
         yield {"type": "sources", "sources": sources, "rewritten_query": standalone_query}
 
