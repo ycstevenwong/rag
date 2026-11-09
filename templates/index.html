@@ -82,8 +82,12 @@
           <option value="spec">Spec</option>
           <option value="other">Other</option>
         </select>
-        <select id="filter-app-code" title="Filter by app code">
+        <select id="filter-app-code" title="App: decides which document versions are searched"{% if app_codes %} data-required="true"{% endif %}>
+          {% if app_codes %}
+          <option value="" disabled selected>Select app *</option>
+          {% else %}
           <option value="">Any app</option>
+          {% endif %}
           {% for code in app_codes %}
           <option value="{{ code }}">{{ code }}</option>
           {% endfor %}
@@ -92,7 +96,7 @@
       <div class="meta-row">
         <input id="filter-tags" type="text" placeholder="must-have tags" />
       </div>
-      <small class="hint">Filters apply to every chat question until cleared.</small>
+      <small class="hint">The app decides which document versions are searched. Changing it starts a new chat.</small>
     </section>
 
     <section class="session">

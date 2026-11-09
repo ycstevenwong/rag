@@ -29,6 +29,7 @@ def live_app(app_module, monkeypatch):
         config, "ADMIN_PASSWORD_HASH", generate_password_hash(_PASSWORD, method="pbkdf2:sha256:1000")
     )
     monkeypatch.setattr(config, "FLASK_SECRET_KEY", "a-private-test-key")
+    monkeypatch.setattr(config, "APP_CODES", ["SG", "MY", "ID"])
     app = app_module.create_app()
     server = make_server("127.0.0.1", 0, app, threaded=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -111,6 +112,7 @@ def test_old_citation_restores_that_answers_search_query(live_app, page):
     app, base_url = live_app
     _upload(app, "zebra.docx", docx_bytes("zebra quota limit is 500"))
     _open(page, base_url)
+    page.select_option("#filter-app-code", "SG")
     _ask(page, "zebra quota", 1)
     _ask(page, "a follow-up", 2)  # StubLLM rewrites this to "standalone question"
     query = page.locator("#rewritten-query")
@@ -121,3 +123,35 @@ def test_old_citation_restores_that_answers_search_query(live_app, page):
 
     page.locator(".message.assistant").nth(1).locator(".citation").first.click()
     assert "standalone question" in query.inner_text()
+
+
+def test_send_is_disabled_until_an_app_is_selected(live_app, page):
+    _, base_url = live_app
+    _open(page, base_url)
+    assert page.locator("#filter-app-code option").all_inner_texts() == ["Select app *", "SG", "MY", "ID"]
+    assert page.is_disabled("#send-btn")
+
+    page.fill("#message-input", "hello")
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(200)
+    assert page.locator(".message").count() == 0
+    assert page.input_value("#message-input") == "hello"
+
+    page.select_option("#filter-app-code", "SG")
+    assert page.is_enabled("#send-btn")
+
+
+def test_changing_app_starts_a_new_conversation(live_app, page):
+    """Earlier answers come from the other app's document versions."""
+    app, base_url = live_app
+    _upload(app, "zebra.docx", docx_bytes("zebra quota limit is 500"))
+    _open(page, base_url)
+    page.select_option("#filter-app-code", "SG")
+    _ask(page, "zebra quota", 1)
+    first_session = page.inner_text("#session-id")
+
+    page.select_option("#filter-app-code", "MY")
+
+    assert page.locator(".message").count() == 0
+    assert page.inner_text("#session-id") != first_session
+    assert page.is_enabled("#send-btn")

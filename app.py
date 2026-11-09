@@ -451,6 +451,12 @@ def create_app() -> Flask:
             return jsonify({"error": "empty message"}), 400
 
         raw_filters = payload.get("filters") or {}
+        # The app decides which document versions apply. Without one, every version
+        # would be searched and the answer could silently come from the wrong one.
+        requested_app = raw_filters.get("app_code") if isinstance(raw_filters, dict) else None
+        if cfg.APP_CODES and requested_app not in cfg.APP_CODES:
+            supported = ", ".join(cfg.APP_CODES)
+            return jsonify({"error": f"Select an app first: {supported}."}), 400
         filters: dict | None = None
         if isinstance(raw_filters, dict):
             st = (raw_filters.get("source_type") or "").strip().lower()

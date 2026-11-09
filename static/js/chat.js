@@ -691,8 +691,25 @@
     }
   });
 
+  const appRequired = filterAppCodeEl.dataset.required === "true";
+
+  function updateSendState() {
+    sendBtn.disabled = appRequired && !filterAppCodeEl.value;
+  }
+  updateSendState();
+
+  filterAppCodeEl.addEventListener("change", () => {
+    // Earlier answers came from the previous app's document versions.
+    if (messagesEl.children.length) newSessionBtn.click();
+    updateSendState();
+  });
+
   formEl.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (appRequired && !filterAppCodeEl.value) {
+      filterAppCodeEl.focus();
+      return;
+    }
     const text = inputEl.value.trim();
     if (!text) return;
     inputEl.value = "";
@@ -748,7 +765,7 @@
       assistantEl.innerHTML = `<span style="color:var(--danger)">${escapeHtml(err.message)}</span>`;
     } finally {
       assistantEl.classList.remove("cursor");
-      sendBtn.disabled = false;
+      updateSendState();
       inputEl.focus();
     }
   });
