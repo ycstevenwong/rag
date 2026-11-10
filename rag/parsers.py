@@ -66,7 +66,8 @@ def _is_font(span: dict, kinds: tuple[str, ...]) -> bool:
 
 def _span_text(span: dict) -> str:
     text = span.get("text", "")
-    if text.strip() and _is_font(span, _DINGBAT_FONTS):
+    # Some text fonts name the glyph too, in a span of its own.
+    if text.strip() == "Bullet" or (text.strip() and _is_font(span, _DINGBAT_FONTS)):
         return "•"
     return text
 

@@ -77,6 +77,18 @@ def test_dingbat_bullets_become_bullet_characters(tmp_path):
     assert items.text == "• Stock Investments • Bond Investments"
 
 
+def test_bullet_glyph_named_in_a_text_font_becomes_a_bullet_character(tmp_path):
+    def build(page):
+        page.insert_text((72, 80), "Self-directed plans:", fontsize=12)
+        page.insert_text((72, 94), "Bullet", fontsize=10, fontname="tiro")
+        page.insert_text((110, 94), "Self-directed 401(k) plan", fontsize=10)
+        _body_prose(page, 300)
+
+    blocks = parse_pdf(_pdf(tmp_path, build))
+
+    assert any(b.text == "• Self-directed 401(k) plan" for b in blocks)
+
+
 def test_small_table_figures_do_not_set_the_body_size(tmp_path):
     """Table cells are short, so they shouldn't decide what size normal text is."""
     def build(page):
