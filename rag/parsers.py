@@ -41,7 +41,60 @@ def _push_heading(stack: list[tuple[int, str]], level: int, text: str) -> None:
     Compares levels rather than stack depth, since documents can skip levels."""
     while stack and stack[-1][0] >= level:
         stack.pop()
-    stack.append((level, text))
+    stack.append((level, _collapse_spaces(text)))
+
+
+def _collapse_spaces(text: str) -> str:
+    """Tabs after heading numbers ("5.\\tScope") would otherwise show in citations."""
+    return " ".join(text.split())
+
+
+# Fonts whose glyphs are symbols, not words. Their sizes say nothing about headings:
+# formulas use large brackets. Dingbat glyphs are bullets, and some PDFs name them
+# ("Bullet") in the extracted text.
+_SYMBOL_FONTS = ("symbol", "math", "wingding", "webding", "dingbat")
+_DINGBAT_FONTS = ("wingding", "webding", "dingbat")
+_LETTER_RE = re.compile(r"[^\W\d_]")
+# Lines with this many words are sentences, so their size is the body size.
+_PROSE_LINE_WORDS = 6
+
+
+def _is_font(span: dict, kinds: tuple[str, ...]) -> bool:
+    font = (span.get("font") or "").lower()
+    return any(k in font for k in kinds)
+
+
+def _span_text(span: dict) -> str:
+    text = span.get("text", "")
+    if text.strip() and _is_font(span, _DINGBAT_FONTS):
+        return "•"
+    return text
+
+
+_BULLET_GAP_RE = re.compile(r"•(?=\S)")
+
+
+def _heading_size(spans: list[dict]) -> float:
+    """Largest size among spans in a text font, so a formula's big brackets in a
+    symbol font don't count."""
+    sizes = [
+        s.get("size") or 0.0
+        for s in spans
+        if s.get("text", "").strip() and not _is_font(s, _SYMBOL_FONTS)
+    ]
+    return max(sizes, default=0.0)
+
+
+# Headings are rarely this long and almost never end like a sentence.
+_SENTENCE_WORDS = 12
+_SENTENCE_END_RE = re.compile(r"[.!?][\"'”’)]*$")
+
+
+def _looks_like_heading(text: str) -> bool:
+    """Has a word (not just a figure like "Q2") and isn't a full sentence."""
+    if len(_LETTER_RE.findall(text)) < 2:
+        return False
+    return not (len(text.split()) >= _SENTENCE_WORDS and _SENTENCE_END_RE.search(text))
 
 
 def _heading_path(stack: list[tuple[int, str]]) -> str:
@@ -175,17 +228,19 @@ def parse_pdf(path: Path) -> list[Block]:
                 if blk.get("type", 0) != 0:  # 0 = text block
                     continue
                 texts: list[str] = []
+                line_heading_sizes: list[float] = []
                 sizes: list[float] = []
                 span_fonts: list[tuple[float, str]] = []
                 for line in blk.get("lines", []):
                     spans = line.get("spans", [])
-                    line_text = "".join(s.get("text", "") for s in spans).strip()
+                    line_text = _BULLET_GAP_RE.sub("• ", "".join(_span_text(s) for s in spans)).strip()
                     # Per line, because a block can join a repeated line with
                     # others (a two-line footer, say).
                     if _is_repeated_line(line_text, repeating):
                         continue
                     if line_text:
                         texts.append(line_text)
+                        line_heading_sizes.append(_heading_size(spans))
                     for s in spans:
                         sz = s.get("size")
                         if sz:
@@ -212,8 +267,18 @@ def parse_pdf(path: Path) -> list[Block]:
                 if screen_buf:
                     _flush_screen()
 
-                # Heading heuristic: visibly larger than body AND short.
-                is_heading = max_size >= heading_threshold and len(text) <= 200
+                # Heading heuristic: the block's leading lines are visibly larger
+                # than body text, and short. Body lines after them in the same
+                # block (a title directly above its first paragraph) stay body.
+                n_title = 0
+                while n_title < len(texts) and line_heading_sizes[n_title] >= heading_threshold:
+                    n_title += 1
+                title = _collapse_spaces(" ".join(texts[:n_title]))
+                is_heading = n_title > 0 and len(title) <= 200 and _looks_like_heading(title)
+                rest = " ".join(texts[n_title:]) if is_heading else ""
+                if is_heading:
+                    text = title
+                    heading_size = max(line_heading_sizes[:n_title])
                 # OR the block text matches a configured Field Descriptions
                 # label — treated as a level-4 sub-heading so its contents nest
                 # under whatever section is above it.
@@ -221,11 +286,12 @@ def parse_pdf(path: Path) -> list[Block]:
                 if is_field_desc and not is_heading:
                     is_heading = True
                     forced_level = 4
+                    text = _collapse_spaces(text)
                 else:
                     forced_level = None
 
                 if is_heading:
-                    level = forced_level or _heading_level_from_size(max_size, body_size)
+                    level = forced_level or _heading_level_from_size(heading_size, body_size)
                     # A major heading (level ≤ 3) resets the screen scope.
                     # Level-4 Field Descriptions inherits the current tag so
                     # it stays anchored to the screen it describes.
@@ -240,6 +306,11 @@ def parse_pdf(path: Path) -> list[Block]:
                     if last_screen_page is not None:
                         meta["related_screen_page"] = last_screen_page
                     blocks.append(Block(text=text, kind="heading", meta=meta))
+                    if rest:
+                        body_meta = {"page": page_num, "heading_path": meta["heading_path"]}
+                        if last_screen_page is not None:
+                            body_meta["related_screen_page"] = last_screen_page
+                        blocks.append(Block(text=rest, kind="paragraph", meta=body_meta))
                 else:
                     meta = {
                         "page": page_num,
@@ -268,6 +339,9 @@ def _estimate_body_font_size(doc) -> float | None:
     """Most-common font size weighted by character count. Returns None if
     no usable text/font info is available."""
     sizes: Counter[float] = Counter()
+    # Sentences only, when there are any: in a report full of tables, the small
+    # figures in the cells can outweigh the text and set the body size too low.
+    prose_sizes: Counter[float] = Counter()
     for page in doc:
         try:
             page_dict = page.get_text("dict")
@@ -277,15 +351,21 @@ def _estimate_body_font_size(doc) -> float | None:
             if blk.get("type", 0) != 0:
                 continue
             for line in blk.get("lines", []):
-                for span in line.get("spans", []):
+                spans = line.get("spans", [])
+                is_prose = len("".join(s.get("text", "") for s in spans).split()) >= _PROSE_LINE_WORDS
+                for span in spans:
                     sz = span.get("size")
                     txt = (span.get("text") or "").strip()
                     if sz and txt:
                         # Round to nearest 0.5pt so near-identical sizes group.
-                        sizes[round(sz * 2) / 2] += len(txt)
-    if not sizes:
+                        key = round(sz * 2) / 2
+                        sizes[key] += len(txt)
+                        if is_prose:
+                            prose_sizes[key] += len(txt)
+    counts = prose_sizes or sizes
+    if not counts:
         return None
-    return sizes.most_common(1)[0][0]
+    return counts.most_common(1)[0][0]
 
 
 def _heading_level_from_size(size: float, body_size: float) -> int:
@@ -319,7 +399,8 @@ def parse_docx(path: Path) -> list[Block]:
             if not text:
                 continue
             style = (para.style.name or "").lower() if para.style else ""
-            is_heading = style.startswith("heading")
+            # Some documents put body sentences in a heading style.
+            is_heading = style.startswith("heading") and _looks_like_heading(text)
 
             if is_heading and stop_keywords:
                 heading_lower = text.lower()
@@ -327,6 +408,7 @@ def parse_docx(path: Path) -> list[Block]:
                     break  # drop the matching heading and everything after
 
             if is_heading:
+                text = _collapse_spaces(text)
                 try:
                     level = int(style.split()[-1])
                 except ValueError:
