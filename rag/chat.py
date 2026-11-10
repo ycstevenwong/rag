@@ -19,7 +19,7 @@ SYSTEM_PROMPT = """You answer questions using ONLY the numbered sources in the c
 
 Rules:
 - State only what a source directly says. Do not use outside knowledge, even for well-known facts.
-- If no source directly answers the question, reply only that you couldn't find it in the documents. Do not answer yes or no, and do not cite anything.
+- If no source directly answers the question, reply only that you couldn't find it in the documents. Never start that reply with "Yes" or "No", and do not cite anything.
 - A source not mentioning something is not evidence for or against it.
 - After each factual claim, cite the number of a source that directly states it, e.g. [1] or [2][3]. Do not cite a source just because it covers a related topic.
 - Use quotation marks only for wording copied exactly from a source.
@@ -103,13 +103,23 @@ class ChatService:
                 *_trim_history(history, max_turns=8, token_budget=history_budget),
                 {"role": "user", "content": user_message},
             ]
+            yes_no = _YesNoBeforeDecline()
             try:
                 for delta in provider.stream_chat(SYSTEM_PROMPT, messages):
-                    full_reply.append(delta)
-                    yield {"type": "delta", "text": delta}
+                    text = yes_no.feed(delta)
+                    if text:
+                        full_reply.append(text)
+                        yield {"type": "delta", "text": text}
             except Exception as exc:
+                text = yes_no.finish()
+                if text:
+                    yield {"type": "delta", "text": text}
                 yield {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
                 return
+            text = yes_no.finish()
+            if text:
+                full_reply.append(text)
+                yield {"type": "delta", "text": text}
 
         assistant_text = "".join(full_reply)
         try:
@@ -139,6 +149,75 @@ class ChatService:
         except Exception as exc:
             print(f"[rewrite_query] fallback to original question: {type(exc).__name__}: {exc}", flush=True)
             return question
+
+
+_YES_NO_PREFIX_RE = re.compile(r"^\s*(?:yes|no)\s*[,.!:;—–-]\s*", re.IGNORECASE)
+_BARE_YES_NO_RE = re.compile(r"^\s*(?:yes|no)\s*$", re.IGNORECASE)
+_FIRST_SENTENCE_END_RE = re.compile(r"[.!?\n]")
+_COULD_NOT_FIND_RE = re.compile(r"\b(?:could(?:n['’]t| not)|can(?:['’]t|not)|unable to) find\b", re.IGNORECASE)
+_SOURCES_RE = re.compile(r"\b(?:sources?|documents?|context)\b", re.IGNORECASE)
+_NEGATION_RE = re.compile(r"\b(?:not|no)\b|n['’]t\b", re.IGNORECASE)
+_CITED_RE = re.compile(r"\[\d")
+# Without a sentence end by then, the reply isn't a short decline.
+_MAX_HELD = 300
+
+
+def _is_decline(sentence: str) -> bool:
+    """Says nothing was found, or that the sources don't cover it, citing nothing."""
+    if _CITED_RE.search(sentence):
+        return False
+    if _COULD_NOT_FIND_RE.search(sentence):
+        return True
+    return bool(_SOURCES_RE.search(sentence) and _NEGATION_RE.search(sentence))
+
+
+class _YesNoBeforeDecline:
+    """Removes a leading "Yes,"/"No," from a reply that says the sources don't
+    cover the question: "No, the sources do not mention X" reads as an answer.
+
+    Only a reply starting with yes or no is held back, until its first sentence
+    after that word is complete. Every other reply streams as it arrives."""
+
+    def __init__(self) -> None:
+        self._held = ""
+        self._released = False
+
+    def feed(self, text: str) -> str:
+        if self._released:
+            return text
+        self._held += text
+        return self._decide(final=False)
+
+    def finish(self) -> str:
+        return "" if self._released else self._decide(final=True)
+
+    def _decide(self, final: bool) -> str:
+        held = self._held
+        start = held.lstrip()
+        could_become_yes_no = start.isalpha() or not start
+        if not final and could_become_yes_no and len(start) < 4 and (
+            "yes".startswith(start.lower()) or "no".startswith(start.lower())
+        ):
+            return ""
+        prefix = _YES_NO_PREFIX_RE.match(held)
+        if not prefix:
+            # "No" may still be followed by a comma in the next piece.
+            if not final and _BARE_YES_NO_RE.match(held):
+                return ""
+            return self._release(held)
+        rest = held[prefix.end():]
+        end = _FIRST_SENTENCE_END_RE.search(rest)
+        if not end and not final and len(rest) < _MAX_HELD:
+            return ""
+        sentence = rest[: end.end()] if end else rest
+        if rest and _is_decline(sentence):
+            return self._release(rest[0].upper() + rest[1:])
+        return self._release(held)
+
+    def _release(self, text: str) -> str:
+        self._released = True
+        self._held = ""
+        return text
 
 
 def _session_path(session_id: str) -> Path:
