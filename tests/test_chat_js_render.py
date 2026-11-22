@@ -92,3 +92,16 @@ def test_html_in_answers_and_code_is_escaped():
 
 def test_placeholder_characters_in_answers_cannot_inject_code_spans():
     assert _render("`a` \x000\x00") == "<code>a</code> 0"
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("Excluded:\n* Stocks\n* Bonds", "Excluded:<br>• Stocks<br>• Bonds"),
+        ("Excluded:\n- Stocks\n  - Bonds", "Excluded:<br>• Stocks<br>  • Bonds"),
+        ("a * b - c", "a * b - c"),
+        ("```\n* not a bullet\n```", "<pre><code>* not a bullet</code></pre>"),
+    ],
+)
+def test_list_markers_at_the_start_of_a_line_become_bullets(text, expected):
+    assert _render(text) == expected

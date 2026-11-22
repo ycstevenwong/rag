@@ -865,6 +865,7 @@
     let html = escapeHtml(text.replace(/\u0000/g, ""));
     html = html.replace(/```([\s\S]*?)```/g, (_, c) => setAside(`<pre><code>${c.trim()}</code></pre>`));
     html = html.replace(/`([^`\n]+)`/g, (_, c) => setAside(`<code>${c}</code>`));
+    html = html.replace(/^([ \t]*)[*-] (?=\S)/gm, "$1• ");
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
     html = html.replace(/\[(\d+(?:\s*[-–,]\s*\d+)*)\]/g, (match, group) => {
       // Only numbers with a source become chips, so an invented [12] or a literal
