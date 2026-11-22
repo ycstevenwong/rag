@@ -45,7 +45,9 @@
   const filterAppCodeEl = document.getElementById("filter-app-code");
   const filterTagsEl = document.getElementById("filter-tags");
 
-  let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
+  // Every page load is a new chat: an earlier conversation isn't shown again, so it
+  // mustn't shape the answers to new questions.
+  let sessionId = newSessionId();
   let currentSources = [];
   let isAdmin = false;
   let allDocs = [];
@@ -365,7 +367,6 @@
   });
   updateFileDropState();
   sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
-  localStorage.setItem("card-rag.session", sessionId);
 
   function newSessionId() {
     return crypto.randomUUID().replace(/-/g, "");
@@ -373,7 +374,6 @@
 
   newSessionBtn.addEventListener("click", () => {
     sessionId = newSessionId();
-    localStorage.setItem("card-rag.session", sessionId);
     sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     messagesEl.innerHTML = "";
     sourcesListEl.innerHTML = '<p class="empty">Cited sources will appear here.</p>';
@@ -786,7 +786,6 @@
   function handleEvent(evt, assistantEl, onDelta) {
     if (evt.type === "session") {
       sessionId = evt.session_id;
-      localStorage.setItem("card-rag.session", sessionId);
       sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     } else if (evt.type === "sources") {
       currentSources = evt.sources || [];

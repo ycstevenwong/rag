@@ -157,6 +157,26 @@ def test_changing_app_starts_a_new_conversation(live_app, page):
     assert page.is_enabled("#send-btn")
 
 
+def test_reloading_starts_a_fresh_chat(live_app, page):
+    """The earlier turns are no longer on screen, so they mustn't shape the next answer."""
+    app, base_url = live_app
+    _upload(app, "zebra.docx", docx_bytes("zebra quota limit is 500"))
+    _open(page, base_url)
+    page.select_option("#filter-app-code", "SG")
+    _ask(page, "zebra quota", 1)
+    first_session = page.inner_text("#session-id")
+
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    page.select_option("#filter-app-code", "SG")
+    _ask(page, "zebra quota", 1)
+
+    assert page.inner_text("#session-id") != first_session
+    # A turn with history is rewritten (the stub says "standalone question"); a
+    # fresh chat's first question is searched as asked.
+    assert "zebra quota" in page.inner_text("#rewritten-query")
+
+
 def test_labels_are_chosen_from_dropdowns_including_when_reviewing(live_app, page, monkeypatch):
     app, base_url = live_app
     monkeypatch.setattr(config, "FUNCTIONALITIES", ["loan", "other"])
