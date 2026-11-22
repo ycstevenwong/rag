@@ -70,3 +70,13 @@ def test_bulk_ingest_only_collects_pdf_and_docx(tmp_path):
     found = _load_ingest_script().collect_files(tmp_path)
 
     assert sorted(p.name for p in found) == ["a.pdf", "b.DOCX"]
+
+
+def test_a_file_over_the_size_limit_gets_a_readable_reason(app_module, monkeypatch):
+    monkeypatch.setattr(config, "MAX_UPLOAD_MB", 1)
+    client = app_module.create_app().test_client()
+
+    response = _upload(client, "big.pdf", b"x" * (1024 * 1024 + 1))
+
+    assert response.status_code == 413
+    assert response.json["error"] == "The file is larger than the 1 MB upload limit."

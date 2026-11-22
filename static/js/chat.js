@@ -662,6 +662,12 @@
     });
 
     xhr.addEventListener("load", () => {
+      // A rejected upload is a JSON {"error": ...} reply, not an event stream.
+      if (!finalError && xhr.status >= 400) {
+        let reason = "";
+        try { reason = JSON.parse(xhr.responseText).error || ""; } catch {}
+        finalError = new Error(reason || `Upload failed (HTTP ${xhr.status}).`);
+      }
       if (finalError) {
         uploadStatus.classList.add("error");
         uploadStatus.textContent = finalError.message;

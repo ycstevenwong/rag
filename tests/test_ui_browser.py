@@ -206,3 +206,27 @@ def test_labels_are_chosen_from_dropdowns_including_when_reviewing(live_app, pag
 
     response = page.request.get(f"{base_url}/docs")
     assert response.json()["items"][0]["version"] == "v2"
+
+
+def _fill_admin_upload_form(page, base_url: str, monkeypatch) -> None:
+    monkeypatch.setattr(config, "FUNCTIONALITIES", ["loan"])
+    monkeypatch.setattr(config, "VERSIONS", ["v1"])
+    _log_in(page, base_url)
+    _open(page, base_url)
+    page.select_option("#upload-source-type", "manual")
+    page.select_option("#upload-version", "v1")
+    page.select_option("#upload-functionality", "loan")
+
+
+def test_a_rejected_upload_shows_the_servers_reason(live_app, page, monkeypatch):
+    _, base_url = live_app
+    _fill_admin_upload_form(page, base_url, monkeypatch)
+
+    page.set_input_files(
+        "#file-input",
+        {"name": "fees.xlsx", "mimeType": "application/octet-stream", "buffer": b"not a docx"},
+    )
+
+    status = page.locator("#upload-status")
+    status.filter(has_text="Unsupported").wait_for()
+    assert "Convert to .docx or .pdf first" in status.inner_text()

@@ -164,6 +164,12 @@ def create_app() -> Flask:
     retriever = HybridRetriever(vector_store, bm25_store, embedder)
     chat_service = ChatService(retriever)
 
+    @app.errorhandler(413)
+    def too_large(_exc):
+        return jsonify({
+            "error": f"The file is larger than the {cfg.MAX_UPLOAD_MB} MB upload limit.",
+        }), 413
+
     @app.get("/")
     def index() -> str:
         return render_template(
