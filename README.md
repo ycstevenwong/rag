@@ -414,6 +414,15 @@ direction.
    go down.
 5. Use `--detailed` to diagnose specific weak hits and failures.
 
+### Answer eval (prompt and model)
+
+`scripts/prompt_eval.py` asks a running app 15 answerable questions and 6 it
+should decline, three times each, and reports correct answers, whether cited
+passages support them, quote accuracy, and declines. It needs the sample corpus
+with old editions of Regulation E and the FDIC brochure as v1. Its docstring
+says where to get them. Run it against a copy of the app and index, never the
+real one, because its `versions` step deletes and uploads documents.
+
 ## UI uploads vs bulk ingest
 
 The UI's upload form is a deliberate scratch space:
