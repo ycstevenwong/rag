@@ -230,3 +230,39 @@ def test_a_rejected_upload_shows_the_servers_reason(live_app, page, monkeypatch)
     status = page.locator("#upload-status")
     status.filter(has_text="Unsupported").wait_for()
     assert "Convert to .docx or .pdf first" in status.inner_text()
+
+
+def _two_documents(app) -> None:
+    _upload(app, "zebra.docx", docx_bytes("zebra quota limit is 500"))
+    _upload(app, "yak.docx", docx_bytes("yak grazing season is spring"))
+
+
+def test_sources_the_answer_cites_come_first_and_the_rest_are_folded(live_app, page):
+    app, base_url = live_app
+    _two_documents(app)
+    _open(page, base_url)
+    page.select_option("#filter-app-code", "SG")
+
+    _ask(page, "zebra quota", 1)  # the stub answers "Stub answer [1]."
+
+    assert page.locator("#sources-list > .source-card").count() == 1
+    assert page.locator("#sources-list > .source-card .n").inner_text() == "1"
+    others = page.locator("#sources-list details.other-sources")
+    assert "Other passages searched (1)" in others.locator("summary").inner_text()
+    assert not others.locator(".source-card").is_visible()
+
+
+def test_a_reply_that_cites_nothing_says_no_source_was_used(live_app, page, monkeypatch):
+    from .conftest import StubLLM
+
+    monkeypatch.setattr(StubLLM, "reply", "I couldn't find it in the documents.")
+    app, base_url = live_app
+    _two_documents(app)
+    _open(page, base_url)
+    page.select_option("#filter-app-code", "SG")
+
+    _ask(page, "zebra quota", 1)
+
+    assert page.locator("#sources-list > .source-card").count() == 0
+    assert "This answer didn't use any of the documents." in page.inner_text("#sources-list")
+    assert "Other passages searched (2)" in page.inner_text("#sources-list details.other-sources summary")

@@ -784,6 +784,10 @@
       assistantEl.innerHTML = `<span style="color:var(--danger)">${escapeHtml(err.message)}</span>`;
     } finally {
       assistantEl.classList.remove("cursor");
+      if (assistantEl.citationSources) {
+        assistantEl.citedNumbers = citedNumbers(assistantEl);
+        renderSources(currentSources, assistantEl.citedNumbers);
+      }
       updateSendState();
       inputEl.focus();
     }
@@ -851,7 +855,7 @@
         // answer's sources, so bring those back before looking up the card.
         if (root.citationSources && root.citationSources !== currentSources) {
           currentSources = root.citationSources;
-          renderSources(currentSources);
+          renderSources(currentSources, root.citedNumbers);
           renderRewrittenQuery(root.citationQuery);
         }
         const n = parseInt(el.dataset.n, 10);
@@ -875,7 +879,26 @@
     rewrittenQueryEl.innerHTML = `<span class="label">Searched for</span>${escapeHtml(q)}`;
   }
 
-  function renderSources(sources) {
+  // The source numbers an answer's citation chips point to.
+  function citedNumbers(answerEl) {
+    return new Set(Array.from(answerEl.querySelectorAll(".citation"), (el) => Number(el.dataset.n)));
+  }
+
+  function sourceCard(s) {
+    const card = document.createElement("div");
+    card.className = "source-card";
+    card.dataset.n = s.n;
+    card.innerHTML = `
+      <div><span class="n">${s.n}</span><strong>${escapeHtml(s.filename)}</strong></div>
+      <div class="locator">${escapeHtml(s.locator)}</div>
+      <div class="snippet">${escapeHtml(s.snippet)}</div>
+    `;
+    return card;
+  }
+
+  // While an answer streams, every passage searched is shown. Once it's done, the
+  // ones it cites come first and the rest fold away under "Other passages searched".
+  function renderSources(sources, cited = null) {
     sourcesListEl.classList.remove("flash");
     void sourcesListEl.offsetWidth;
     sourcesListEl.classList.add("flash");
@@ -884,16 +907,22 @@
       sourcesListEl.innerHTML = '<p class="empty">No sources retrieved.</p>';
       return;
     }
-    for (const s of sources) {
-      const card = document.createElement("div");
-      card.className = "source-card";
-      card.dataset.n = s.n;
-      card.innerHTML = `
-        <div><span class="n">${s.n}</span><strong>${escapeHtml(s.filename)}</strong></div>
-        <div class="locator">${escapeHtml(s.locator)}</div>
-        <div class="snippet">${escapeHtml(s.snippet)}</div>
-      `;
-      sourcesListEl.appendChild(card);
+    if (!cited) {
+      for (const s of sources) sourcesListEl.appendChild(sourceCard(s));
+      return;
+    }
+    const used = sources.filter((s) => cited.has(s.n));
+    const others = sources.filter((s) => !cited.has(s.n));
+    if (!used.length) {
+      sourcesListEl.innerHTML = '<p class="empty">This answer didn\'t use any of the documents.</p>';
+    }
+    for (const s of used) sourcesListEl.appendChild(sourceCard(s));
+    if (others.length) {
+      const details = document.createElement("details");
+      details.className = "other-sources";
+      details.innerHTML = `<summary>Other passages searched (${others.length})</summary>`;
+      for (const s of others) details.appendChild(sourceCard(s));
+      sourcesListEl.appendChild(details);
     }
   }
 
