@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import codecs
 import re
+import zipfile
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -169,7 +170,12 @@ def parse_pdf(path: Path) -> list[Block]:
         lower = text.strip().lower()
         return any(label in lower for label in field_desc_labels)
 
-    doc = fitz.open(str(path))
+    try:
+        doc = fitz.open(str(path), filetype="pdf")
+    except (fitz.FileDataError, RuntimeError) as exc:
+        raise ValueError(
+            "This file isn't a valid PDF. Open it and save it as a PDF again, then re-upload."
+        ) from exc
     try:
         if doc.needs_pass:
             raise ValueError("This PDF is password-protected. Remove the password and re-upload.")
@@ -386,7 +392,14 @@ def parse_docx(path: Path) -> list[Block]:
 
     from . import config_facade as cfg
 
-    doc = Document(str(path))
+    from docx.opc.exceptions import PackageNotFoundError
+
+    try:
+        doc = Document(str(path))
+    except (PackageNotFoundError, zipfile.BadZipFile, KeyError) as exc:
+        raise ValueError(
+            "This file isn't a valid Word document. Open it in Word and save it as .docx, then re-upload."
+        ) from exc
     blocks: list[Block] = []
     heading_stack: list[tuple[int, str]] = []
     stop_keywords = [k.lower() for k in cfg.DOCX_STOP_HEADINGS if k.strip()]
