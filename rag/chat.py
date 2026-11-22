@@ -51,7 +51,9 @@ class ChatService:
 
     def _get_provider(self) -> LLMProvider:
         if self._provider is None:
-            self._provider = LLMProvider(cfg.LLM_MODEL, cfg.LLM_BASE_URL, cfg.LLM_API_KEY)
+            self._provider = LLMProvider(
+                cfg.LLM_MODEL, cfg.LLM_BASE_URL, cfg.LLM_API_KEY, cfg.LLM_TEMPERATURE
+            )
         return self._provider
 
     def chat_stream(

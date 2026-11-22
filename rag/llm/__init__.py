@@ -8,8 +8,11 @@ import requests
 
 
 class LLMProvider:
-    def __init__(self, model: str, base_url: str, api_key: str):
+    def __init__(self, model: str, base_url: str, api_key: str, temperature: float = 0.0):
         self.model = model
+        # At a model's default temperature the same question can get an answer one
+        # time and "couldn't find it" the next.
+        self.temperature = temperature
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
 
@@ -21,7 +24,12 @@ class LLMProvider:
         with requests.post(
             f"{self.base_url}/v1/chat/completions",
             headers=self._headers(),
-            json={"model": self.model, "messages": full_messages, "stream": True},
+            json={
+                "model": self.model,
+                "messages": full_messages,
+                "stream": True,
+                "temperature": self.temperature,
+            },
             stream=True,
             timeout=300,
         ) as resp:
@@ -55,6 +63,7 @@ class LLMProvider:
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": max_tokens,
                 "stream": False,
+                "temperature": self.temperature,
             },
             timeout=120,
         )

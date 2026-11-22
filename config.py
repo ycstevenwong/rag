@@ -63,6 +63,9 @@ FILES_PATH = INDEX_DIR / "files.json"
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+# 0 gives the same reply to the same question. Higher values vary the wording,
+# but also whether the model answers or says it couldn't find it.
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", LLM_BASE_URL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")

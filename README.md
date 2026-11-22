@@ -464,6 +464,7 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 LLM_BASE_URL=http://localhost:11434       # or your OpenAI-compatible server
 LLM_MODEL=llama3.1
 LLM_API_KEY=                              # bearer token; leave empty if endpoint has no auth
+LLM_TEMPERATURE=0                         # 0 = same reply to the same question; higher varies answers
 
 # Embeddings (defaults to LLM_BASE_URL / LLM_API_KEY if unset)
 EMBEDDING_BASE_URL=http://localhost:11434

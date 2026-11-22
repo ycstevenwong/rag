@@ -20,7 +20,7 @@ def sse_provider():
             pass
 
         def do_POST(self):
-            self.rfile.read(int(self.headers.get("content-length", 0)))
+            state["request"] = json.loads(self.rfile.read(int(self.headers.get("content-length", 0))))
             self.send_response(200)
             self.send_header("Content-Type", state["content_type"])
             self.end_headers()
@@ -36,6 +36,7 @@ def sse_provider():
         ).encode("utf-8") + b"data: [DONE]\n\n"
         return LLMProvider("model", f"http://127.0.0.1:{server.server_address[1]}", "key")
 
+    serve.state = state
     yield serve
     server.shutdown()
 
@@ -74,3 +75,22 @@ def test_unicode_line_separator_in_content_is_not_a_line_break(sse_provider):
     provider = sse_provider(_delta("one two"))
 
     assert _stream(provider) == "one two"
+
+
+def test_answers_are_asked_for_at_temperature_zero(sse_provider):
+    """At the model's default temperature the same question flipped between an
+    answer, "couldn't find it" and a bare "[1]"."""
+    provider = sse_provider(_delta("ok"))
+
+    _stream(provider)
+
+    assert sse_provider.state["request"]["temperature"] == 0
+
+
+def test_the_temperature_can_be_configured(sse_provider):
+    provider = sse_provider(_delta("ok"))
+    provider.temperature = 0.3
+
+    _stream(provider)
+
+    assert sse_provider.state["request"]["temperature"] == 0.3
