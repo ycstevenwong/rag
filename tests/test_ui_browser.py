@@ -114,7 +114,7 @@ def test_old_citation_restores_that_answers_search_query(live_app, page):
     _open(page, base_url)
     page.select_option("#filter-app-code", "SG")
     _ask(page, "zebra quota", 1)
-    _ask(page, "a follow-up", 2)  # StubLLM rewrites this to "standalone question"
+    _ask(page, "what about it?", 2)  # StubLLM rewrites this to "standalone question"
     query = page.locator("#rewritten-query")
     assert "standalone question" in query.inner_text()
 

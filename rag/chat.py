@@ -27,7 +27,7 @@ Rules:
 - When relevant, structure answers with short bullet lists or fenced code blocks.
 """
 
-REWRITE_PROMPT = """Given the conversation history and a follow-up message, rewrite the follow-up as a standalone question that can be understood without the history. Output only the rewritten question, no preamble.
+REWRITE_PROMPT = """Given the conversation history and a follow-up message, rewrite the follow-up as a standalone question that can be understood without the history. Take from the history only what the follow-up refers to. Write it in the same language as the follow-up. Output only the rewritten question, no preamble.
 
 History:
 {history}
@@ -68,7 +68,7 @@ class ChatService:
             provider = self._get_provider()
 
             standalone_query = question
-            if history:
+            if history and _refers_back(question):
                 standalone_query = self._rewrite_query(provider, history, question)
 
             retrieved = self.retriever.search(
@@ -149,6 +149,34 @@ class ChatService:
         except Exception as exc:
             print(f"[rewrite_query] fallback to original question: {type(exc).__name__}: {exc}", flush=True)
             return question
+
+
+# Words that point back at the conversation, in English, Malay and Indonesian.
+_REFERENCE_WORDS = frozenset("""
+    it its it's this that these those they them their same above previous earlier former latter
+    ia itu ini tersebut mereka dia sama
+""".split())
+_CONTINUATIONS = (
+    "what about", "how about", "and ", "also", "then ",
+    "bagaimana dengan", "macam mana dengan", "bagaimana pula", "dan ", "juga",
+)
+# Malay/Indonesian "-nya" often means "its" ("syaratnya": its conditions).
+_NOT_REFERENCE_NYA = frozenset({"hanya", "punya", "tanya", "bertanya"})
+_WORD_RE = re.compile(r"[\w'’]+")
+
+
+def _refers_back(question: str) -> bool:
+    """Whether the question needs the conversation to be understood. One that
+    stands on its own is searched as asked: rewriting it pulls in the earlier
+    topic or language."""
+    text = question.strip().lower()
+    words = [w.replace("’", "'") for w in _WORD_RE.findall(text)]
+    if len(words) <= 2 or text.startswith(_CONTINUATIONS):
+        return True
+    return any(
+        w in _REFERENCE_WORDS or (w.endswith("nya") and len(w) > 5 and w not in _NOT_REFERENCE_NYA)
+        for w in words
+    )
 
 
 _YES_NO_PREFIX_RE = re.compile(r"^\s*(?:yes|no)\s*[,.!:;—–-]\s*", re.IGNORECASE)
