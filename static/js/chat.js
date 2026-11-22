@@ -46,6 +46,9 @@
   const filterSourceTypeEl = document.getElementById("filter-source-type");
   const filterAppCodeEl = document.getElementById("filter-app-code");
   const filterTagsEl = document.getElementById("filter-tags");
+  const uploadHeadingEl = document.getElementById("upload-heading");
+  const labelHelpEl = document.getElementById("label-help");
+  const chatContextEl = document.getElementById("chat-context");
 
   // Every page load is a new chat: an earlier conversation isn't shown again, so it
   // mustn't shape the answers to new questions.
@@ -68,6 +71,7 @@
     adminToggleEl.textContent = admin ? "Admin · Log out" : "Admin login";
     adminToggleEl.classList.toggle("is-admin", !!admin);
     anonymousOnlyFieldsEl.hidden = !!admin;
+    uploadHeadingEl.textContent = admin ? "Add a document" : "Suggest a document";
     uploadHintUserEl.hidden = !!admin;
     uploadHintAdminEl.hidden = !admin;
     if (typeof updateFileDropState === "function") updateFileDropState();
@@ -339,6 +343,8 @@
 
   function updateUploadAppCodeVisibility() {
     const isManual = uploadSourceTypeEl.value === "manual";
+    labelHelpEl.hidden = !uploadSourceTypeEl.value;
+    labelHelpEl.textContent = isManual ? labelHelpEl.dataset.manual : labelHelpEl.dataset.single;
     uploadAppCodeEl.style.display = isManual ? "none" : "";
     if (isManual) uploadAppCodeEl.value = "";
   }
@@ -726,8 +732,20 @@
 
   const appRequired = filterAppCodeEl.dataset.required === "true";
 
+  const defaultPlaceholder = inputEl.placeholder;
+
   function updateSendState() {
-    sendBtn.disabled = appRequired && !filterAppCodeEl.value;
+    const app = filterAppCodeEl.value;
+    sendBtn.disabled = appRequired && !app;
+    if (appRequired && !app) {
+      inputEl.placeholder = "Choose an app on the left to start asking.";
+    } else if (app) {
+      inputEl.placeholder = `Ask about the ${app} documents… (Enter to send, Shift+Enter for a new line)`;
+    } else {
+      inputEl.placeholder = defaultPlaceholder;
+    }
+    chatContextEl.hidden = !app;
+    chatContextEl.textContent = app ? `Answers come from the ${app} documents.` : "";
   }
   updateSendState();
 

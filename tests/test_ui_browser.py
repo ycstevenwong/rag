@@ -341,3 +341,52 @@ def test_an_admin_sees_a_log_out_button_and_no_empty_upload_list(live_app, page)
 
     assert "Log out" in page.inner_text("#admin-toggle")
     assert "No user uploads" not in page.inner_text("body")
+
+
+def test_staff_see_where_to_ask_before_the_upload_form(live_app, page):
+    _, base_url = live_app
+    _open(page, base_url)
+
+    ask_first = page.evaluate(
+        """() => !!(document.querySelector('section.ask').compareDocumentPosition(
+            document.querySelector('section.upload')) & Node.DOCUMENT_POSITION_FOLLOWING)"""
+    )
+    assert ask_first
+    assert page.inner_text("section.ask h2") == "ASK ABOUT"
+    assert page.inner_text("section.upload h2") == "SUGGEST A DOCUMENT"
+    assert "llama" not in page.inner_text(".sidebar").lower()
+
+
+def test_an_admin_adds_rather_than_suggests_a_document(live_app, page):
+    _, base_url = live_app
+    _log_in(page, base_url)
+    _open(page, base_url)
+
+    assert page.inner_text("section.upload h2") == "ADD A DOCUMENT"
+
+
+def test_the_composer_says_to_pick_an_app_and_then_which_app_answers(live_app, page):
+    _, base_url = live_app
+    _open(page, base_url)
+    assert page.get_attribute("#message-input", "placeholder") == "Choose an app on the left to start asking."
+
+    page.select_option("#filter-app-code", "MY")
+
+    assert page.get_attribute("#message-input", "placeholder").startswith("Ask about the MY documents")
+    assert page.inner_text("#chat-context") == "Answers come from the MY documents."
+
+
+def test_choosing_a_source_type_explains_who_sees_the_document(live_app, page, monkeypatch):
+    monkeypatch.setattr(config, "APP_VERSION_MAP", {"SG": {"loan": "v2", "*": "v1"}, "MY": {"*": "v2"}})
+    _, base_url = live_app
+    _open(page, base_url)
+
+    page.select_option("#upload-source-type", "manual")
+    manual = page.inner_text("#label-help")
+    page.select_option("#upload-source-type", "spec")
+    spec = page.inner_text("#label-help")
+
+    assert "every app" in manual
+    assert "SG: loan v2, everything else v1" in manual
+    assert "MY: v2" in manual
+    assert "Only the app you choose" in spec

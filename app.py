@@ -83,6 +83,21 @@ def _checked_labels(source_type: str, app_code: str, version, functionality) -> 
     )
 
 
+def _version_rules_summary(version_map: dict) -> str:
+    """Which manual version each app uses, e.g. "SG: loan v2, everything else v1; MY: v2"."""
+    def versions(value) -> str:
+        return "/".join(value) if isinstance(value, list) else str(value)
+
+    parts = []
+    for app_code, rules in version_map.items():
+        named = [f"{functionality} {versions(v)}" for functionality, v in rules.items() if functionality != "*"]
+        if "*" in rules:
+            rest = versions(rules["*"])
+            named.append(f"everything else {rest}" if named else rest)
+        parts.append(f"{app_code}: {', '.join(named)}")
+    return "; ".join(parts)
+
+
 def _free_disk_gb() -> float:
     try:
         return shutil.disk_usage(str(cfg.DATA_DIR)).free / (1024 ** 3)
@@ -178,6 +193,7 @@ def create_app() -> Flask:
             app_codes=cfg.APP_CODES,
             versions=cfg.VERSIONS,
             functionalities=cfg.FUNCTIONALITIES,
+            version_rules=_version_rules_summary(cfg.APP_VERSION_MAP),
         )
 
     @app.get("/docs")

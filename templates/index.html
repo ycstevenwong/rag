@@ -9,10 +9,9 @@
 <body>
   <aside class="sidebar">
     <div class="brand-row">
-      <h1 class="brand">card-rag</h1>
+      <h1 class="brand" title="Model: {{ model }}">card-rag</h1>
       <button id="admin-toggle" class="admin-toggle" type="button" hidden></button>
     </div>
-    <p class="meta">{{ model }}</p>
 
     <div id="admin-modal" class="admin-modal" hidden>
       <form id="admin-login-form">
@@ -26,8 +25,34 @@
       </form>
     </div>
 
+    <section class="ask">
+      <h2>Ask about</h2>
+      <div class="meta-row">
+        <select id="filter-app-code" title="App: decides which document versions are searched"{% if app_codes %} data-required="true"{% endif %}>
+          {% if app_codes %}
+          <option value="" disabled selected>Select app *</option>
+          {% else %}
+          <option value="">Any app</option>
+          {% endif %}
+          {% for code in app_codes %}
+          <option value="{{ code }}">{{ code }}</option>
+          {% endfor %}
+        </select>
+        <select id="filter-source-type" title="Filter by source type">
+          <option value="">Any type</option>
+          <option value="manual">Manual</option>
+          <option value="spec">Spec</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="meta-row">
+        <input id="filter-tags" type="text" placeholder="only documents tagged… (optional)" />
+      </div>
+      <small class="hint">The app decides which document versions are searched. Changing it starts a new chat.</small>
+    </section>
+
     <section class="upload">
-      <h2>Documents</h2>
+      <h2 id="upload-heading">Suggest a document</h2>
       <form id="upload-form">
         <div class="meta-row">
           <select id="upload-source-type" title="Source type" required>
@@ -57,6 +82,9 @@
             {% endfor %}
           </select>
         </div>
+        <small id="label-help" class="hint label-help" hidden
+               data-manual="Manuals are shared by every app. Each app uses the version its rule picks: {{ version_rules }}."
+               data-single="Only the app you choose sees this document."></small>
         <div class="meta-row">
           <input id="upload-tags" type="text" placeholder="tags: comma,separated (optional)" />
         </div>
@@ -84,47 +112,23 @@
     </section>
     <div id="pending-notice" class="status" hidden></div>
 
-    <section class="filter">
-      <h2>Filter retrieval</h2>
-      <div class="meta-row">
-        <select id="filter-source-type" title="Filter by source type">
-          <option value="">Any type</option>
-          <option value="manual">Manual</option>
-          <option value="spec">Spec</option>
-          <option value="other">Other</option>
-        </select>
-        <select id="filter-app-code" title="App: decides which document versions are searched"{% if app_codes %} data-required="true"{% endif %}>
-          {% if app_codes %}
-          <option value="" disabled selected>Select app *</option>
-          {% else %}
-          <option value="">Any app</option>
-          {% endif %}
-          {% for code in app_codes %}
-          <option value="{{ code }}">{{ code }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="meta-row">
-        <input id="filter-tags" type="text" placeholder="must-have tags" />
-      </div>
-      <small class="hint">The app decides which document versions are searched. Changing it starts a new chat.</small>
-    </section>
 
     <section class="session">
-      <h2>Session</h2>
+      <h2>Chat</h2>
       <div class="session-controls">
         <code id="session-id">—</code>
-        <button id="new-session" type="button">New</button>
+        <button id="new-session" type="button">New chat</button>
       </div>
     </section>
   </aside>
 
   <main class="chat">
+    <div id="chat-context" class="chat-context" hidden></div>
     <div id="messages" class="messages"></div>
     <form id="chat-form" class="composer">
       <textarea
         id="message-input"
-        placeholder="Ask about your documents… (Enter to send, Shift+Enter for newline)"
+        placeholder="Ask about your documents… (Enter to send, Shift+Enter for a new line)"
         rows="2"
         required
       ></textarea>
