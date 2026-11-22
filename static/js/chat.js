@@ -32,6 +32,8 @@
   const fileDropLabelEl = document.getElementById("file-drop-label");
   const pendingSectionEl = document.getElementById("pending-section");
   const pendingListEl = document.getElementById("pending-list");
+  const pendingNoticeEl = document.getElementById("pending-notice");
+  const docsNoticeEl = document.getElementById("docs-notice");
   const openDocsModalBtn = document.getElementById("open-docs-modal");
   const docsModalEl = document.getElementById("docs-modal");
   const docsModalCloseBtn = document.getElementById("docs-modal-close");
@@ -63,7 +65,7 @@
     }
     adminToggleEl.hidden = false;
     isAdmin = !!admin;
-    adminToggleEl.textContent = admin ? "🔒 admin" : "🔓 Login";
+    adminToggleEl.textContent = admin ? "Admin · Log out" : "Admin login";
     adminToggleEl.classList.toggle("is-admin", !!admin);
     anonymousOnlyFieldsEl.hidden = !!admin;
     uploadHintUserEl.hidden = !!admin;
@@ -254,6 +256,7 @@
           btn.disabled = false;
           return;
         }
+        showNotice(pendingNoticeEl, `Approved and indexed ${li.querySelector(".name").textContent}.`);
         refreshPending();
         refreshDocs();
       } catch (err) {
@@ -416,9 +419,7 @@
     docListEl.hidden = false;
     docListEl.innerHTML = "";
     if (!unmanaged.length) {
-      const li = document.createElement("li");
-      li.innerHTML = '<span class="name" style="color:var(--muted)">No user uploads</span>';
-      docListEl.appendChild(li);
+      docListEl.hidden = true;
       // Update modal if it's open.
       if (!docsModalEl.hidden) renderDocsTable();
       return;
@@ -482,6 +483,7 @@
 
   openDocsModalBtn.addEventListener("click", () => {
     docsModalEl.hidden = false;
+    docsNoticeEl.hidden = true;
     docsSearchEl.value = "";
     docsFilterTypeEl.value = "";
     docsFilterAppEl.value = "";
@@ -572,11 +574,15 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const doc = allDocs.find((d) => d.doc_id === docId);
       if (r.ok) {
         await refreshDocs();
+        showNotice(docsNoticeEl, `Saved ${doc ? doc.filename : "the changes"}.`);
       } else {
         btn.disabled = false;
-        alert("Update failed");
+        let reason = "";
+        try { reason = (await r.json()).error || ""; } catch {}
+        showNotice(docsNoticeEl, `Not saved: ${reason || `HTTP ${r.status}`}`, true);
       }
       return;
     }
@@ -584,9 +590,16 @@
       const docId = tr.dataset.docId;
       const doc = allDocs.find((d) => d.doc_id === docId);
       if (!doc) return;
-      if (!confirm(`Delete "${doc.filename}"?`)) return;
+      // Two entries can share a file name, so name the labels too.
+      const labels = [doc.source_type, doc.app_code, doc.version, doc.functionality].filter(Boolean).join(" · ");
+      if (!confirm(`Delete "${doc.filename}"${labels ? ` (${labels})` : ""}?`)) return;
       const r = await fetch(`/docs/${docId}`, { method: "DELETE" });
-      if (r.ok) await refreshDocs();
+      if (r.ok) {
+        await refreshDocs();
+        showNotice(docsNoticeEl, `Deleted ${doc.filename}${labels ? ` (${labels})` : ""}.`);
+      } else {
+        showNotice(docsNoticeEl, `Not deleted: HTTP ${r.status}`, true);
+      }
     }
   });
 
@@ -683,6 +696,7 @@
         }
         uploadProgress.value = 100;
         uploadForm.reset();
+        updateUploadAppCodeVisibility();
         updateFileDropState();
         refreshDocs();
       } else {
@@ -924,6 +938,12 @@
       for (const s of others) details.appendChild(sourceCard(s));
       sourcesListEl.appendChild(details);
     }
+  }
+
+  function showNotice(el, text, isError = false) {
+    el.textContent = text;
+    el.classList.toggle("error", isError);
+    el.hidden = false;
   }
 
   function escapeHtml(s) {

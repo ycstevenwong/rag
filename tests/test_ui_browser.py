@@ -266,3 +266,78 @@ def test_a_reply_that_cites_nothing_says_no_source_was_used(live_app, page, monk
     assert page.locator("#sources-list > .source-card").count() == 0
     assert "This answer didn't use any of the documents." in page.inner_text("#sources-list")
     assert "Other passages searched (2)" in page.inner_text("#sources-list details.other-sources summary")
+
+
+def _admin_upload_through_the_form(page, name: str, text: str) -> None:
+    page.set_input_files(
+        "#file-input",
+        {"name": name, "mimeType": "application/octet-stream", "buffer": docx_bytes(text)},
+    )
+    page.wait_for_function("/Indexed/.test(document.querySelector('#upload-status').textContent)")
+
+
+def test_the_app_field_comes_back_after_a_manual_upload(live_app, page, monkeypatch):
+    _, base_url = live_app
+    _fill_admin_upload_form(page, base_url, monkeypatch)
+    _admin_upload_through_the_form(page, "guide.docx", "loan guide")
+
+    # The form is cleared for the next upload, so its type is no longer Manual.
+    assert page.input_value("#upload-source-type") == ""
+    assert page.is_visible("#upload-app-code")
+
+
+def test_saving_an_edit_says_it_was_saved(live_app, page, monkeypatch):
+    _, base_url = live_app
+    _fill_admin_upload_form(page, base_url, monkeypatch)
+    _admin_upload_through_the_form(page, "guide.docx", "loan guide")
+    page.click("#open-docs-modal")
+    page.click('#docs-tbody [data-action="edit"]')
+
+    page.locator('tr.edit-row [data-action="save-edit"]').click()
+
+    page.locator("#docs-notice").filter(has_text="Saved guide.docx.").wait_for()
+
+
+def test_the_delete_prompt_names_the_entrys_labels(live_app, page, monkeypatch):
+    _, base_url = live_app
+    _fill_admin_upload_form(page, base_url, monkeypatch)
+    _admin_upload_through_the_form(page, "guide.docx", "loan guide")
+    page.click("#open-docs-modal")
+    prompts = []
+    page.on("dialog", lambda d: (prompts.append(d.message), d.dismiss()))
+
+    page.click('#docs-tbody [data-action="delete"]')
+
+    assert prompts == ['Delete "guide.docx" (manual · v1 · loan)?']
+
+
+def test_approving_an_upload_says_it_was_indexed(live_app, page, monkeypatch):
+    app, base_url = live_app
+    monkeypatch.setattr(config, "FUNCTIONALITIES", ["loan"])
+    monkeypatch.setattr(config, "VERSIONS", ["v1"])
+    app.test_client().post(
+        "/upload",
+        data={
+            "file": (io.BytesIO(docx_bytes("yak facts")), "yak.docx"),
+            "source_type": "manual", "version": "v1", "functionality": "loan",
+            "requester": "staff",
+        },
+        content_type="multipart/form-data",
+    ).get_data()
+    _log_in(page, base_url)
+    _open(page, base_url)
+
+    page.click('#pending-list [data-action="approve"]')
+    page.click('#pending-list [data-action="confirm-approve"]')
+
+    page.locator("#pending-notice").filter(has_text="Approved and indexed yak.docx.").wait_for()
+    assert not page.is_visible("#pending-section")
+
+
+def test_an_admin_sees_a_log_out_button_and_no_empty_upload_list(live_app, page):
+    _, base_url = live_app
+    _log_in(page, base_url)
+    _open(page, base_url)
+
+    assert "Log out" in page.inner_text("#admin-toggle")
+    assert "No user uploads" not in page.inner_text("body")
