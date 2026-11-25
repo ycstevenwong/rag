@@ -17,10 +17,14 @@ from typing import Any, Iterable
 from .parsers import Block
 
 
+_CJK_CHAR_RE = re.compile("[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]")
+
+
 def count_tokens(text: str) -> int:
-    # Rough heuristic: ~4 chars per token for English text. Good enough for
-    # chunk-size control; we don't need byte-perfect counts here.
-    return max(1, len(text) // 4)
+    # Rough heuristic: ~4 chars per token for alphabetic text and ~1 per CJK
+    # character. Good enough for size control; we don't need exact counts here.
+    n_cjk = len(_CJK_CHAR_RE.findall(text))
+    return max(1, n_cjk + (len(text) - n_cjk) // 4)
 
 
 @dataclass
@@ -43,6 +47,7 @@ def chunk_blocks(
     current_page: Any = None
     current_slide: Any = None
     current_heading_path: Any = None
+    current_sheet: Any = None
 
     def flush() -> None:
         nonlocal buffer, buffer_tokens
@@ -75,8 +80,16 @@ def chunk_blocks(
             and current_heading_path is not None
             and block_heading_path != current_heading_path
         )
-        if crosses_page or crosses_slide or crosses_section:
+        block_sheet = block.meta.get("sheet")
+        crosses_sheet = (
+            block_sheet is not None
+            and current_sheet is not None
+            and block_sheet != current_sheet
+        )
+        if crosses_page or crosses_slide or crosses_section or crosses_sheet:
             flush()
+        if block_sheet is not None:
+            current_sheet = block_sheet
 
         if buffer_tokens + block_tokens > target_tokens and buffer:
             flush()
@@ -87,6 +100,9 @@ def chunk_blocks(
                 # intact — splitting mid-screen destroys column alignment
                 # and semantic meaning.
                 chunks.append(_blocks_to_chunk([block]))
+            elif "rows" in block.meta:
+                for piece in _split_sheet_block(block, target_tokens):
+                    chunks.append(_blocks_to_chunk([piece]))
             else:
                 for piece in _split_long_text(block.text, target_tokens):
                     chunks.append(_blocks_to_chunk([
@@ -145,6 +161,51 @@ def _blocks_to_chunk(buf: list[Block]) -> Chunk:
     return Chunk(text=text, token_count=count_tokens(text), meta=meta)
 
 
+def _split_sheet_block(block: Block, target_tokens: int) -> list[Block]:
+    """Split a spreadsheet block between rows. Every piece keeps the header line
+    and cites only its own rows. A single oversized row is split as plain text."""
+    header, *lines = block.text.split("\n")
+    rows = block.meta["rows"]
+    room = max(1, target_tokens - count_tokens(header))
+
+    def piece(numbers: list[int], texts: list[str]) -> Block:
+        return Block(
+            text="\n".join([header, *texts]),
+            kind=block.kind,
+            meta={
+                "sheet": block.meta["sheet"],
+                "row_start": numbers[0],
+                "row_end": numbers[-1],
+                "rows": numbers,
+            },
+        )
+
+    pieces: list[Block] = []
+    numbers: list[int] = []
+    texts: list[str] = []
+    used = 0
+
+    def flush() -> None:
+        nonlocal numbers, texts, used
+        if numbers:
+            pieces.append(piece(numbers, texts))
+        numbers, texts, used = [], [], 0
+
+    for number, line in zip(rows, lines):
+        tokens = count_tokens(line)
+        if used + tokens > room:
+            flush()
+        if tokens > room:
+            for part in _split_long_text(line, room):
+                pieces.append(piece([number], [part]))
+            continue
+        numbers.append(number)
+        texts.append(line)
+        used += tokens
+    flush()
+    return pieces
+
+
 def _split_long_text(text: str, target_tokens: int) -> list[str]:
     sentences = re.split(r"(?<=[.!?])\s+", text)
     pieces: list[str] = []
@@ -173,11 +234,7 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
     for i in range(1, len(chunks)):
         prev = chunks[i - 1]
         cur = chunks[i]
-        # Skip overlap when either side is a screen chunk. The tail of a
-        # screen mockup is a column-aligned fragment that carries no useful
-        # continuity, and prepending prose overlap onto a screen would break
-        # the screen's alignment. Screens are atomic units, no overlap.
-        if prev.meta.get("contains_screen") or cur.meta.get("contains_screen"):
+        if not _overlap_allowed(prev.meta, cur.meta):
             out.append(cur)
             continue
         tail = _tail_at_boundary(prev.text, overlap_tokens * 4)
@@ -185,9 +242,32 @@ def _apply_overlap(chunks: list[Chunk], overlap_tokens: int) -> list[Chunk]:
         out.append(Chunk(
             text=new_text,
             token_count=count_tokens(new_text),
-            meta=cur.meta,
+            meta=_meta_with_overlap(prev.meta, cur.meta),
         ))
     return out
+
+
+def _overlap_allowed(prev: dict[str, Any], cur: dict[str, Any]) -> bool:
+    # The tail of a screen mockup is a column-aligned fragment with no useful
+    # continuity, and prose prepended to a screen would break its alignment.
+    if prev.get("contains_screen") or cur.get("contains_screen"):
+        return False
+    # Overlap text is cited with the current chunk's locator, so it mustn't come
+    # from a place that locator can't name.
+    return all(prev.get(key) == cur.get(key) for key in ("heading_path", "slide_nums", "sheets"))
+
+
+def _meta_with_overlap(prev: dict[str, Any], cur: dict[str, Any]) -> dict[str, Any]:
+    """The chunk now holds text from `prev`, so its citation has to cover it."""
+    meta = dict(cur)
+    if prev.get("pages") and cur.get("pages"):
+        meta["pages"] = sorted({*prev["pages"], *cur["pages"]})
+    if prev.get("row_range") and cur.get("row_range"):
+        meta["row_range"] = [
+            min(prev["row_range"][0], cur["row_range"][0]),
+            max(prev["row_range"][1], cur["row_range"][1]),
+        ]
+    return meta
 
 
 def _tail_at_boundary(text: str, max_chars: int) -> str:

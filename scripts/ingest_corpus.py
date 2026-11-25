@@ -52,9 +52,9 @@ walks only data/corpus/spec/. Pointing directly at the subdir
 
 Idempotent: documents already in the index (by SHA-256) are skipped.
 
-WARNING: do NOT run this while `python app.py` is also running. Both
-processes hold their own in-memory copies of the FAISS/BM25 stores and
-the last writer wins on persist.
+This can't run while `python app.py` is running: both processes would hold
+their own in-memory copies of the stores and the last writer would win, so the
+script exits with code 3 if another process holds the index's writer lock.
 """
 from __future__ import annotations
 
@@ -71,10 +71,11 @@ import config as cfg
 from rag.bm25_store import BM25Store
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
+from rag.metadata import canonical_label
 from rag.vector_store import FaissStore
+from rag.writer_lock import WriterLockHeld, acquire_writer_lock
 
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
 DEFAULT_CORPUS_DIR = ROOT / "data" / "corpus"
 KNOWN_SOURCE_TYPES = {"manual", "spec", "other"}
 VERSION_RE = re.compile(r"^v\d+$", re.IGNORECASE)
@@ -82,11 +83,11 @@ VERSION_RE = re.compile(r"^v\d+$", re.IGNORECASE)
 
 def collect_files(path: Path) -> list[Path]:
     if path.is_file():
-        return [path] if path.suffix.lower() in ALLOWED_EXTENSIONS else []
+        return [path] if path.suffix.lower() in cfg.ALLOWED_EXTENSIONS else []
     if path.is_dir():
         return sorted(
             p for p in path.rglob("*")
-            if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS
+            if p.is_file() and p.suffix.lower() in cfg.ALLOWED_EXTENSIONS
         )
     return []
 
@@ -229,6 +230,12 @@ def main() -> int:
         print(f"No supported documents found under {target}", file=sys.stderr)
         return 1
 
+    try:
+        acquire_writer_lock(cfg.INDEX_DIR / ".lock")
+    except WriterLockHeld as exc:
+        print(str(exc), file=sys.stderr)
+        return 3
+
     embedder = Embedder(cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BASE_URL, cfg.EMBEDDING_API_KEY)
     vector_store = FaissStore(
         vectors_path=cfg.VECTORS_PATH,
@@ -236,7 +243,7 @@ def main() -> int:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store(cfg.BM25_PATH)
+    bm25_store = BM25Store.from_chunks(vector_store.chunks)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
 
     print(f"Ingesting {len(files)} document(s) from {target}\n")
@@ -287,6 +294,8 @@ def main() -> int:
             print(f"  source_type={source_type} app_code={app_code or '-'} version={version or '-'} functionality={functionality or '-'}")
 
         try:
+            version = canonical_label(version, cfg.VERSIONS, "version")
+            functionality = canonical_label(functionality, cfg.FUNCTIONALITIES, "functionality")
             for event in ingest.ingest_stream(
                 file_path,
                 original_filename=file_path.name,

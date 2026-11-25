@@ -6,6 +6,9 @@ The store keeps four files in lockstep under config.INDEX_DIR:
   files.json     - per-file record (file_id, sha256, filename, n_chunks)
   docs.json      - per-(file, metadata) record; many DocRecord -> one FileRecord
 
+Beside them, index_meta.json holds the next chunk ID so that deleted IDs aren't
+reused. An index without that file still loads.
+
 The decoupling lets a single physical file be shared by multiple metadata
 "views" (e.g., the same PDF tagged for two different app_codes) without
 re-embedding the content.
@@ -16,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -54,6 +58,13 @@ class DocRecord:
     version: str = ""
     functionality: str = ""
     managed: bool = False
+    # The name this doc was uploaded under, which can differ between docs sharing a
+    # file. Empty on docs from before this field existed: use FileRecord.filename.
+    filename: str = ""
+
+
+class IndexIntegrityError(RuntimeError):
+    """The on-disk index files disagree and can't be used safely."""
 
 
 class FaissStore:
@@ -68,12 +79,15 @@ class FaissStore:
         self.chunks_path = chunks_path
         self.docs_path = docs_path
         self.files_path = files_path
+        self._meta_path = vectors_path.parent / "index_meta.json"
+        self._next_chunk_id = 0
         self.dim: int | None = None
         self._lock = threading.RLock()
         self.chunks: list[ChunkRecord] = []
         self.docs: list[DocRecord] = []
         self.files: list[FileRecord] = []
         self._index = None
+        self._chunk_by_id: dict[int, ChunkRecord] = {}
         self._file_by_id: dict[str, FileRecord] = {}
         self._file_by_sha: dict[str, FileRecord] = {}
         self._docs_by_file: dict[str, list[DocRecord]] = {}
@@ -96,14 +110,48 @@ class FaissStore:
             data = json.loads(self.docs_path.read_text(encoding="utf-8"))
             self.docs = [DocRecord(**d) for d in data]
 
+        self._check_alignment()
         self._rebuild_indices()
+        self._next_chunk_id = self._load_next_chunk_id()
+
+    def _load_next_chunk_id(self) -> int:
+        """The file only protects against reusing deleted IDs, so if it's missing
+        or unreadable (an index from before it existed) next_chunk_id() falls back
+        to the chunks."""
+        try:
+            value = json.loads(self._meta_path.read_text(encoding="utf-8"))["next_chunk_id"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return 0
+        return value if isinstance(value, int) else 0
+
+    def _check_alignment(self) -> None:
+        """A vector's position must equal its chunk's list index. Files from an
+        interrupted persist can break that, and search would then silently
+        return the wrong chunks, so refuse to load them."""
+        n_vectors = self._index.ntotal if self._index is not None else 0
+        if n_vectors != len(self.chunks):
+            raise IndexIntegrityError(
+                f"Index files disagree: {self.vectors_path.name} has {n_vectors} vectors "
+                f"but {self.chunks_path.name} has {len(self.chunks)} chunks, probably from "
+                f"an interrupted write. Results would be wrong, so the index was not "
+                f"loaded. Delete the files in {self.vectors_path.parent} and re-ingest."
+            )
 
     def _rebuild_indices(self) -> None:
+        self._index_chunks()
         self._file_by_id = {f.file_id: f for f in self.files}
         self._file_by_sha = {f.sha256: f for f in self.files}
         self._docs_by_file = {}
         for d in self.docs:
             self._docs_by_file.setdefault(d.file_id, []).append(d)
+
+    def _index_chunks(self) -> None:
+        # A new dict, swapped in whole, so an unlocked get_chunk sees one or the
+        # other. If an old index has duplicate IDs, the first keeps winning.
+        by_id: dict[int, ChunkRecord] = {}
+        for c in self.chunks:
+            by_id.setdefault(c.id, c)
+        self._chunk_by_id = by_id
 
     def add(self, vectors: np.ndarray, records: list[ChunkRecord]) -> None:
         import faiss
@@ -115,6 +163,9 @@ class FaissStore:
                 self._index = faiss.IndexFlatIP(self.dim)
             self._index.add(vectors)
             self.chunks.extend(records)
+            for r in records:
+                self._chunk_by_id.setdefault(r.id, r)
+                self._next_chunk_id = max(self._next_chunk_id, r.id + 1)
 
     def add_file(self, file: FileRecord) -> None:
         with self._lock:
@@ -186,6 +237,7 @@ class FaissStore:
                 new_index.add(kept)
             self._index = new_index
             self.chunks = keep_chunks
+            self._index_chunks()
             file_to_remove = self._file_by_id.get(file_id)
             self.files = [f for f in self.files if f.file_id != file_id]
             self._file_by_id.pop(file_id, None)
@@ -195,24 +247,34 @@ class FaissStore:
             return removed
 
     def search(self, query_vec: np.ndarray, k: int) -> list[tuple[ChunkRecord, float]]:
-        if self._index is None or self._index.ntotal == 0:
-            return []
-        q = query_vec.reshape(1, -1).astype(np.float32, copy=False)
-        scores, ids = self._index.search(q, min(k, self._index.ntotal))
-        out: list[tuple[ChunkRecord, float]] = []
-        for idx, score in zip(ids[0], scores[0]):
-            if idx < 0 or idx >= len(self.chunks):
-                continue
-            out.append((self.chunks[idx], float(score)))
-        return out
+        # Held across the search and the position lookup: FAISS isn't safe to
+        # search during add(), and delete_doc() replaces the index and the chunk
+        # list, which must be read as a matching pair.
+        with self._lock:
+            if self._index is None or self._index.ntotal == 0:
+                return []
+            q = query_vec.reshape(1, -1).astype(np.float32, copy=False)
+            scores, ids = self._index.search(q, min(k, self._index.ntotal))
+            out: list[tuple[ChunkRecord, float]] = []
+            for idx, score in zip(ids[0], scores[0]):
+                if idx < 0 or idx >= len(self.chunks):
+                    continue
+                out.append((self.chunks[idx], float(score)))
+            return out
 
     def next_chunk_id(self) -> int:
-        return (self.chunks[-1].id + 1) if self.chunks else 0
+        highest_held = max((c.id for c in self.chunks), default=-1)
+        return max(self._next_chunk_id, highest_held + 1)
 
     def persist(self) -> None:
         import faiss
 
         with self._lock:
+            # First, so a crash below can't let a later ingest reuse a deleted ID.
+            _atomic_write_text(
+                self._meta_path,
+                json.dumps({"next_chunk_id": self.next_chunk_id()}, indent=2),
+            )
             if self._index is not None:
                 _atomic_write_bytes(self.vectors_path, lambda p: faiss.write_index(self._index, str(p)))
             _atomic_write_text(
@@ -229,29 +291,27 @@ class FaissStore:
             )
 
     def get_chunk(self, chunk_id: int) -> ChunkRecord | None:
-        for c in self.chunks:
-            if c.id == chunk_id:
-                return c
-        return None
+        return self._chunk_by_id.get(chunk_id)
 
     def get_vectors(self, chunk_ids: list[int]) -> tuple[list[int], np.ndarray]:
         """Return (kept_ids, stacked_vectors) for the given chunk_ids.
         Vectors are L2-normalized (FAISS IndexFlatIP stored them that way).
         Missing chunk_ids are silently dropped."""
-        if self._index is None or self._index.ntotal == 0 or not chunk_ids:
-            return [], np.zeros((0, self.dim or 0), dtype=np.float32)
-        position_by_id = {c.id: i for i, c in enumerate(self.chunks)}
-        kept: list[int] = []
-        positions: list[int] = []
-        for cid in chunk_ids:
-            pos = position_by_id.get(cid)
-            if pos is not None and pos < self._index.ntotal:
-                kept.append(cid)
-                positions.append(pos)
-        if not positions:
-            return [], np.zeros((0, self.dim or 0), dtype=np.float32)
-        vecs = np.stack([self._index.reconstruct(p) for p in positions]).astype(np.float32)
-        return kept, vecs
+        with self._lock:
+            if self._index is None or self._index.ntotal == 0 or not chunk_ids:
+                return [], np.zeros((0, self.dim or 0), dtype=np.float32)
+            position_by_id = {c.id: i for i, c in enumerate(self.chunks)}
+            kept: list[int] = []
+            positions: list[int] = []
+            for cid in chunk_ids:
+                pos = position_by_id.get(cid)
+                if pos is not None and pos < self._index.ntotal:
+                    kept.append(cid)
+                    positions.append(pos)
+            if not positions:
+                return [], np.zeros((0, self.dim or 0), dtype=np.float32)
+            vecs = np.stack([self._index.reconstruct(p) for p in positions]).astype(np.float32)
+            return kept, vecs
 
 
 def _replace_with_retry(tmp: str, dest: Path, attempts: int = 5) -> None:
@@ -272,14 +332,30 @@ def _replace_with_retry(tmp: str, dest: Path, attempts: int = 5) -> None:
     raise last
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Make a rename durable. Windows can't open a directory this way, and doesn't
+    need to."""
+    if sys.platform == "win32":
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write_text(path: Path, content: str) -> None:
-    """Write UTF-8 text to `path` atomically, with retry on Windows file locks."""
+    """Write UTF-8 text to `path` atomically and durably: a crash or power loss
+    leaves either the old contents or the new. Retries on Windows file locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
         _replace_with_retry(tmp, path)
+        _fsync_directory(path.parent)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
@@ -287,15 +363,21 @@ def atomic_write_text(path: Path, content: str) -> None:
 
 
 def atomic_write_bytes(path: Path, writer) -> None:
-    """Write binary content to `path` atomically. `writer(tmp_path)` does the
-    actual byte write to a temp file; this helper handles the atomic rename
-    with retry on Windows file locks."""
+    """Write binary content to `path` atomically and durably. `writer(tmp_path)`
+    does the actual byte write to a temp file; this helper handles the sync and
+    the atomic rename, with retry on Windows file locks."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     os.close(fd)
     try:
         writer(Path(tmp))
+        fd = os.open(tmp, os.O_RDWR)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
         _replace_with_retry(tmp, path)
+        _fsync_directory(path.parent)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)

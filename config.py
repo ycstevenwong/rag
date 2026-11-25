@@ -31,6 +31,21 @@ def _load_env_file(path: Path) -> None:
 
 _load_env_file(BASE_DIR / ".env")
 
+
+def env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Enables the Werkzeug debugger and auto-reloader for `python app.py`.
+FLASK_DEBUG = env_flag("FLASK_DEBUG")
+# Set this when the app is served over HTTPS. Browsers won't send a Secure
+# cookie over plain HTTP, so leaving it on locally would break admin login.
+SESSION_COOKIE_SECURE = env_flag("SESSION_COOKIE_SECURE")
+# Reverse proxies in front of the app. The login limiter then reads the client's
+# address from X-Forwarded-For. At 0 that header is ignored, because without a proxy
+# anyone could set it to dodge the limit.
+TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT") or "0")
+
 DATA_DIR = BASE_DIR / "data"
 UPLOAD_DIR = DATA_DIR / "uploads"
 INDEX_DIR = DATA_DIR / "index"
@@ -44,11 +59,13 @@ VECTORS_PATH = INDEX_DIR / "vectors.faiss"
 CHUNKS_PATH = INDEX_DIR / "chunks.json"
 DOCS_PATH = INDEX_DIR / "docs.json"
 FILES_PATH = INDEX_DIR / "files.json"
-BM25_PATH = INDEX_DIR / "bm25.pkl"
 
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3.1")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+# 0 gives the same reply to the same question. Higher values vary the wording,
+# but also whether the model answers or says it couldn't find it.
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0"))
 
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", LLM_BASE_URL)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "bge-m3")
@@ -63,7 +80,11 @@ TOP_N_FINAL = int(os.getenv("TOP_N_FINAL", "10"))
 CONTEXT_TOKEN_BUDGET = int(os.getenv("CONTEXT_TOKEN_BUDGET", "16000"))
 
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY", "dev-secret-change-me")
+# Published in this repo, so anyone can sign a session cookie with them.
+INSECURE_SECRET_KEYS = frozenset({"dev-secret-change-me", "change-me"})
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
+# Document types that can enter the index, through the UI or the bulk script.
+ALLOWED_EXTENSIONS = (".pdf", ".docx")
 
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "")
 ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
@@ -79,10 +100,7 @@ UPLOAD_ORPHAN_MAX_AGE = int(os.getenv("UPLOAD_ORPHAN_MAX_AGE", "3600"))
 
 # Edit this list to add or remove the app codes shown in the upload form
 # and filter sidebar. Empty string is always accepted as "unspecified".
-APP_CODES = [
-    # "app-a",
-    # "app-b",
-]
+APP_CODES = ["SG", "MY", "ID"]  # Singapore, Malaysia, Indonesia
 
 # Per-app version map for manuals.
 # Keys: app_code (must also appear in APP_CODES).
@@ -128,14 +146,14 @@ PDF_SCREEN_FONTS = os.getenv("PDF_SCREEN_FONTS", "")
 # Empty = disabled.
 PDF_FIELD_DESC_LABELS = os.getenv("PDF_FIELD_DESC_LABELS", "")
 
+# Labels a new document can be given. Rules in APP_VERSION_MAP match on these, so
+# they're dropdowns rather than free text. Add a functionality here to offer it,
+# and add a rule below only if it needs a different version from "*".
+FUNCTIONALITIES = ["loan", "other"]
+VERSIONS = ["v1", "v2"]
+
 APP_VERSION_MAP: dict[str, dict[str, str | list[str]]] = {
-    # "auth-svc": {
-    #     "login": "v2",
-    #     "token": "v1",
-    #     "mfa":   ["v1", "v2"],
-    #     "*":     "v2",
-    # },
-    # "billing-svc": {
-    #     "*": "v1",
-    # },
+    "SG": {"loan": "v2", "*": "v1"},
+    "MY": {"*": "v2"},
+    "ID": {"*": "v1"},
 }

@@ -8,7 +8,8 @@ PENDING_DIR:
     <pending_id>.json    ← user-supplied metadata + provenance
 
 Admin actions:
-- approve → IngestPipeline runs over the file, then both files are deleted.
+- approve → IngestPipeline runs over the file; both files are deleted only if
+  it finishes. A failed or interrupted approval leaves the item queued.
 - reject  → both files are deleted.
 """
 from __future__ import annotations
@@ -20,6 +21,8 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+
+from .vector_store import atomic_write_text
 
 
 @dataclass
@@ -72,10 +75,7 @@ class PendingStore:
             functionality=functionality.strip(),
             requester=requester.strip(),
         )
-        dest_meta.write_text(
-            json.dumps(asdict(item), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        atomic_write_text(dest_meta, json.dumps(asdict(item), ensure_ascii=False, indent=2))
         return item
 
     def list(self) -> list[PendingItem]:
@@ -103,11 +103,27 @@ class PendingStore:
         return self.dir / f"{item.pending_id}{item.ext}"
 
     def remove(self, pending_id: str) -> None:
-        item = self.get(pending_id)
-        meta_path = self.dir / f"{pending_id}.json"
-        meta_path.unlink(missing_ok=True)
-        if item is not None:
-            self.file_path(item).unlink(missing_ok=True)
+        # By name rather than through the metadata, which may be unreadable.
+        for path in self.dir.iterdir():
+            if path.stem == pending_id:
+                path.unlink(missing_ok=True)
+
+    def cleanup_orphans(self, max_age_seconds: float) -> int:
+        """Delete old files that no readable metadata refers to. They can't appear
+        in the queue or be approved, but they still count toward its size limit:
+        they come from a crash during add(). Newer files are left alone, since one
+        may be an add() still in progress. Returns the number of files removed."""
+        usable = {item.pending_id for item in self.list()}
+        cutoff = time.time() - max_age_seconds
+        removed = 0
+        for path in self.dir.iterdir():
+            try:
+                if path.is_file() and path.stem not in usable and path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+            except OSError:
+                continue
+        return removed
 
 
 def _sha256(path: Path) -> str:

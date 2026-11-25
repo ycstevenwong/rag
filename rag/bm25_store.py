@@ -1,73 +1,74 @@
-"""BM25 keyword index over the chunk corpus, pickled to disk."""
+"""BM25 keyword index over the chunk corpus.
+
+Held in memory only and rebuilt from the chunks at startup, so it can't drift
+from them after a crash and there's no pickle file to trust.
+"""
 from __future__ import annotations
 
-import pickle
 import re
 import threading
-from pathlib import Path
+import unicodedata
 from typing import Iterable
 
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
+_WORD_RE = re.compile(r"\w+")
+# Kana, CJK ideographs and Hangul. These scripts don't reliably separate words
+# with spaces, so runs of them are indexed as overlapping character pairs.
+_CJK_RUN_RE = re.compile("[぀-ヿ㐀-䶿一-鿿가-힯豈-﫿]+")
+
+
+def _cjk_tokens(run: str) -> list[str]:
+    return [run] if len(run) == 1 else [run[i : i + 2] for i in range(len(run) - 1)]
 
 
 def tokenize(text: str) -> list[str]:
-    return [t.lower() for t in _TOKEN_RE.findall(text)]
+    tokens: list[str] = []
+    for word in _WORD_RE.findall(unicodedata.normalize("NFKC", text).lower()):
+        pos = 0
+        for run in _CJK_RUN_RE.finditer(word):
+            if run.start() > pos:
+                tokens.append(word[pos : run.start()])
+            tokens.extend(_cjk_tokens(run.group()))
+            pos = run.end()
+        if pos < len(word):
+            tokens.append(word[pos:])
+    return tokens
 
 
 class BM25Store:
-    def __init__(self, path: Path):
-        self.path = path
+    def __init__(self):
         self._lock = threading.RLock()
-        self.tokenized: list[list[str]] = []
-        self.chunk_ids: list[int] = []
-        self._bm25 = None
-        self._load()
+        # (BM25Okapi, chunk_ids) replaced as one object, so a search running
+        # during a rebuild keeps using a matching pair.
+        self._state: tuple | None = None
 
-    def _load(self) -> None:
-        if not self.path.exists():
-            return
-        with self.path.open("rb") as f:
-            data = pickle.load(f)
-        self.tokenized = data["tokenized"]
-        self.chunk_ids = data["chunk_ids"]
-        if self.tokenized:
-            from rank_bm25 import BM25Okapi
-            self._bm25 = BM25Okapi(self.tokenized)
+    @classmethod
+    def from_chunks(cls, chunks) -> "BM25Store":
+        store = cls()
+        store.rebuild((c.id, c.text) for c in chunks)
+        return store
 
     def rebuild(self, corpus: Iterable[tuple[int, str]]) -> None:
         from rank_bm25 import BM25Okapi
 
         with self._lock:
-            self.tokenized = []
-            self.chunk_ids = []
+            tokenized: list[list[str]] = []
+            chunk_ids: list[int] = []
             for cid, text in corpus:
-                self.tokenized.append(tokenize(text))
-                self.chunk_ids.append(cid)
-            self._bm25 = BM25Okapi(self.tokenized) if self.tokenized else None
+                tokenized.append(tokenize(text))
+                chunk_ids.append(cid)
+            # BM25Okapi divides by its vocabulary size, so it can't take a corpus
+            # with no tokens at all.
+            self._state = (BM25Okapi(tokenized), chunk_ids) if any(tokenized) else None
 
     def search(self, query: str, k: int) -> list[tuple[int, float]]:
-        if not self._bm25:
+        state = self._state
+        if state is None:
             return []
-        scores = self._bm25.get_scores(tokenize(query))
+        bm25, chunk_ids = state
+        scores = bm25.get_scores(tokenize(query))
         if len(scores) == 0:
             return []
         import numpy as np
         top_idx = np.argsort(scores)[::-1][:k]
-        return [(self.chunk_ids[i], float(scores[i])) for i in top_idx if scores[i] > 0]
-
-    def persist(self) -> None:
-        from .vector_store import atomic_write_bytes
-
-        with self._lock:
-            data = {"tokenized": self.tokenized, "chunk_ids": self.chunk_ids}
-
-            def _write(p: Path) -> None:
-                with p.open("wb") as f:
-                    pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-            # Routes through the same retry-aware os.replace as the FAISS /
-            # JSON files, so a transient Windows file lock on bm25.pkl no
-            # longer leaves the keyword index out of sync with the vector
-            # index.
-            atomic_write_bytes(self.path, _write)
+        return [(chunk_ids[i], float(scores[i])) for i in top_idx if scores[i] > 0]

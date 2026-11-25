@@ -51,10 +51,15 @@ class HybridRetriever:
             return []
 
         q_vec = self.embedder.encode_query(query)
-        fetch_mult = 3 if filters else 1
+        # Filters run after the searches, so a filtered query has to consider
+        # every chunk: its matches can rank anywhere. The loops below stop as soon
+        # as k_vector and k_bm25 matches are found.
+        n_chunks = len(self.vector_store.chunks)
+        fetch_vector = n_chunks if filters else k_vector
+        fetch_bm25 = n_chunks if filters else k_bm25
         with ThreadPoolExecutor(max_workers=2) as ex:
-            vec_future = ex.submit(self.vector_store.search, q_vec, k_vector * fetch_mult)
-            bm25_future = ex.submit(self.bm25_store.search, query, k_bm25 * fetch_mult)
+            vec_future = ex.submit(self.vector_store.search, q_vec, fetch_vector)
+            bm25_future = ex.submit(self.bm25_store.search, query, fetch_bm25)
             vec_results = vec_future.result()
             bm25_results = bm25_future.result()
 
@@ -118,14 +123,15 @@ class HybridRetriever:
             if chunk is None:
                 continue
             file = self.vector_store.get_file(chunk.file_id)
-            filename = file.filename if file else ""
+            doc = matching_doc.get(cid)
+            filename = (doc.filename if doc else "") or (file.filename if file else "")
             out.append(RetrievedChunk(
                 chunk=chunk,
                 score=fused_score_by_id.get(cid, 0.0),
                 vector_rank=vec_ranks.get(cid),
                 bm25_rank=bm25_ranks.get(cid),
                 filename=filename,
-                doc=matching_doc.get(cid),
+                doc=doc,
             ))
         return out
 
@@ -186,6 +192,12 @@ def _mmr_select(
     return [kept_ids[i] for i in selected_local]
 
 
+def _label(value: str) -> str:
+    """Labels are typed by people, and "Loan" missing a "loan" rule would silently
+    fall through to the default version."""
+    return value.strip().casefold()
+
+
 def _doc_matches(doc: DocRecord, filters: dict) -> bool:
     """Filter semantics: empty value on the doc = "universal" (passes any filter
     for that field). Non-empty must match the user's choice. Version is
@@ -197,11 +209,11 @@ def _doc_matches(doc: DocRecord, filters: dict) -> bool:
     if app_code and doc.app_code and doc.app_code != app_code:
         return False
     if app_code:
-        version_map = cfg.APP_VERSION_MAP.get(app_code) or {}
-        effective = version_map.get(doc.functionality, version_map.get("*"))
+        version_map = {_label(k): v for k, v in (cfg.APP_VERSION_MAP.get(app_code) or {}).items()}
+        effective = version_map.get(_label(doc.functionality), version_map.get("*"))
         if effective and doc.version:
             allowed = [effective] if isinstance(effective, str) else list(effective)
-            if doc.version not in allowed:
+            if _label(doc.version) not in {_label(v) for v in allowed}:
                 return False
     tags = filters.get("tags") or []
     if tags and doc.tags:

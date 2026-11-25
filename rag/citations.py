@@ -19,7 +19,8 @@ def build_context_block(retrieved: list[RetrievedChunk], token_budget: int) -> t
     sources: list[dict] = []
     used = 0
     for i, r in enumerate(retrieved, start=1):
-        loc = _format_locator(r.filename, r.chunk.meta)
+        version = r.doc.version if r.doc else ""
+        loc = _format_locator(r.filename, r.chunk.meta, version)
         header = f"[{i}] {loc}"
         body = r.chunk.text.strip()
         snippet = f"{header}\n{body}"
@@ -33,6 +34,7 @@ def build_context_block(retrieved: list[RetrievedChunk], token_budget: int) -> t
             "chunk_id": r.chunk.id,
             "doc_id": r.doc.doc_id if r.doc else "",
             "filename": r.filename,
+            "version": version,
             "locator": loc,
             "snippet": body[:600],
             "score": r.score,
@@ -40,8 +42,9 @@ def build_context_block(retrieved: list[RetrievedChunk], token_budget: int) -> t
     return "\n\n---\n\n".join(lines), sources
 
 
-def _format_locator(filename: str, meta: dict[str, Any]) -> str:
-    parts = [filename]
+def _format_locator(filename: str, meta: dict[str, Any], version: str = "") -> str:
+    # Versions can share a filename, so the name alone doesn't identify the source.
+    parts = [f"{filename} ({version})" if version else filename]
     if meta.get("pages"):
         pages = meta["pages"]
         if len(pages) == 1:

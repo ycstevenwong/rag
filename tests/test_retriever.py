@@ -41,7 +41,7 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
         docs_path=tmp_path / "d.json",
         files_path=tmp_path / "f.json",
     )
-    bm25_store = BM25Store(tmp_path / "bm25.pkl")
+    bm25_store = BM25Store()
     embedder = StubEmbedder()
 
     texts = [

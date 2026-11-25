@@ -15,7 +15,7 @@ endpoints called over HTTP.
 | Vector index   | FAISS (`IndexFlatIP`, cosine via normalized vectors)        |
 | Keyword index  | `rank_bm25` BM25Okapi                                       |
 | Fusion         | Reciprocal Rank Fusion (no extra deps)                      |
-| Docs           | PDF (PyMuPDF), DOCX (python-docx), PPTX (python-pptx), XLSX (openpyxl), TXT/MD |
+| Docs           | PDF (PyMuPDF) and DOCX (python-docx) only                   |
 | Persistence    | Plain files under `data/` — no database                     |
 
 ## Quick start
@@ -43,12 +43,15 @@ python app.py
 2. **Chunk** the block stream into ~600-token chunks with 80-token overlap.
    Page and slide boundaries are respected; heading paths are prepended to the
    embedded text. Overlap snaps to paragraph → sentence → word boundaries so
-   chunks never start mid-word.
+   chunks never start mid-word. It stays within a section, slide and sheet; across
+   a page break in one section it's kept and the citation widens to both pages.
 3. **Embed** chunks via `POST {EMBEDDING_BASE_URL}/v1/embeddings` (OpenAI shape:
    `model`, `input`, `encoding_format`, `input_type`). Vectors are L2-normalized
    and appended to a FAISS `IndexFlatIP`. Chunk text and metadata persist to
    `data/index/chunks.json`.
-4. **BM25** index is rebuilt over the full corpus and pickled to `bm25.pkl`.
+4. **BM25** index is rebuilt in memory over the full corpus, at startup and after
+   each change. It isn't saved, and an old `data/index/bm25.pkl` is ignored and
+   can be deleted.
 5. **Query**: if there's conversation history, the LLM rewrites the question as a
    standalone query. Vector and BM25 searches run in parallel; results are fused
    with RRF; metadata filters (source_type / app_code / tags / version policy)
@@ -100,15 +103,31 @@ Filter semantics (`rag/retriever.py`):
 - Policy values can be a string (`"v2"`) or a list (`["v1","v2"]`) when a
   functionality genuinely supports both.
 
+Chat requires an app, because the app decides which versions apply. Without one the
+request gets a 400, and changing app in the UI starts a new conversation. Labels are
+compared ignoring case. New labels must come from the fixed lists below, but labels
+indexed before those lists existed keep working. Citations name the version, as in
+`loan_manual.pdf (v2), p.3`.
+
+If nothing is retrieved, the reply says so and the LLM isn't called.
+
 ### Config knobs
+
+Changes here need a restart, but not a re-ingest.
 
 ```python
 # config.py
-APP_CODES = ["auth-svc", "billing-svc"]
+APP_CODES = ["SG", "MY", "ID"]  # Singapore, Malaysia, Indonesia
+
+# Labels a new document can be given. Add a functionality to offer it, and add a
+# rule only if it needs a different version from "*".
+FUNCTIONALITIES = ["loan", "other"]
+VERSIONS = ["v1", "v2"]
 
 APP_VERSION_MAP = {
-    "auth-svc":    {"login": "v2", "token": "v1", "mfa": ["v1","v2"], "*": "v2"},
-    "billing-svc": {"*": "v1"},
+    "SG": {"loan": "v2", "*": "v1"},
+    "MY": {"*": "v2"},
+    "ID": {"*": "v1"},
 }
 
 DOCX_STOP_HEADINGS = [
@@ -127,7 +146,7 @@ boilerplate.
 
 `scripts/ingest_corpus.py` is the canonical path for adding curated content
 (manuals, specs). It walks a directory tree, parses each supported file
-(`.pdf .docx .pptx .xlsx .txt .md`), and pushes the chunks through the same
+(`.pdf .docx`), and pushes the chunks through the same
 pipeline the UI uploader uses — but with full metadata derived from the folder
 or filename convention, and the `managed=True` flag so the docs are locked
 from UI deletion.
@@ -184,7 +203,18 @@ Per-file overrides (apply when no path/filename info covers the field):
 - `--functionality <f>` — e.g. `login`, `mfa`.
 - `--tags <a,b,c>` — comma-separated, applied to every file in the run.
 
-### Run (Flask must be stopped — the store isn't multi-writer-safe)
+### Run (Flask must be stopped)
+
+Only one process can write the index. The app and this script each hold a lock
+on `data/index/.lock`, and a second one exits with an error. For the same reason,
+run gunicorn with **one worker** and use threads for concurrency, and don't use
+`--preload`, which would let forked workers share the lock:
+
+```bash
+gunicorn -w 1 --threads 8 --timeout 0 app:app
+```
+
+`--timeout 0` stops gunicorn from killing a worker during a long ingest stream.
 
 ```bash
 # Wipe first if you want to re-index from scratch
@@ -238,6 +268,7 @@ Exit codes:
 - `0` — every file succeeded (or was an idempotent skip).
 - `1` — bad path, empty target.
 - `2` — at least one file errored, others may have succeeded.
+- `3` — another process (the app or another ingest) holds the index lock.
 
 ### Idempotency and re-ingest
 
@@ -383,6 +414,15 @@ direction.
    go down.
 5. Use `--detailed` to diagnose specific weak hits and failures.
 
+### Answer eval (prompt and model)
+
+`scripts/prompt_eval.py` asks a running app 15 answerable questions and 6 it
+should decline, three times each, and reports correct answers, whether cited
+passages support them, quote accuracy, and declines. It needs the sample corpus
+with old editions of Regulation E and the FDIC brochure as v1. Its docstring
+says where to get them. Run it against a copy of the app and index, never the
+real one, because its `versions` step deletes and uploads documents.
+
 ## UI uploads vs bulk ingest
 
 The UI's upload form is a deliberate scratch space:
@@ -409,7 +449,8 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 - `rag/llm/__init__.py` — OpenAI-compatible HTTP LLM, SSE streaming.
 - `rag/vector_store.py` — `FileRecord` / `DocRecord` / `ChunkRecord` + FAISS
   with atomic persistence and in-memory lookup indices.
-- `rag/bm25_store.py` — pickled BM25.
+- `rag/bm25_store.py` — in-memory BM25, rebuilt from chunks.
+- `rag/writer_lock.py` — OS lock that keeps a second process off the index.
 - `rag/retriever.py` — parallel hybrid search, RRF, metadata-aware filtering
   with auto-resolved version policy.
 - `rag/ingest.py` — orchestrates parse → chunk → embed → persist; emits per-batch
@@ -432,6 +473,7 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 LLM_BASE_URL=http://localhost:11434       # or your OpenAI-compatible server
 LLM_MODEL=llama3.1
 LLM_API_KEY=                              # bearer token; leave empty if endpoint has no auth
+LLM_TEMPERATURE=0                         # 0 = same reply to the same question; higher varies answers
 
 # Embeddings (defaults to LLM_BASE_URL / LLM_API_KEY if unset)
 EMBEDDING_BASE_URL=http://localhost:11434
@@ -449,9 +491,26 @@ TOP_N_FINAL=6
 CONTEXT_TOKEN_BUDGET=16000
 
 # Flask
-FLASK_SECRET_KEY=change-me
+FLASK_SECRET_KEY=change-me   # must be private if admin login is on, or startup fails
 MAX_UPLOAD_MB=50
+FLASK_DEBUG=0                # 1 enables the debugger and auto-reload; local use only
+SESSION_COOKIE_SECURE=0      # 1 when served over HTTPS
+TRUSTED_PROXY_COUNT=0        # reverse proxies in front of the app, for the login limit
 ```
+
+### Index files and recovery
+
+`data/index/` holds `vectors.faiss`, `chunks.json`, `files.json`, `docs.json`,
+`index_meta.json` (next chunk ID) and `.lock`. `bm25.pkl` is no longer used, and any
+old copy can be deleted.
+
+If a crash leaves the vector and chunk counts different, startup stops with an
+error rather than returning wrong results. Delete the index files and re-ingest to
+recover.
+
+Chunking and parsing changes only affect newly ingested files. To apply them to
+existing documents, wipe the index and re-ingest: uploading the same bytes again
+reuses the existing chunks.
 
 `config.py` (not env-driven — edit code):
 
@@ -466,6 +525,7 @@ MAX_UPLOAD_MB=50
 pytest -q
 ```
 
-`test_retriever.py` requires FAISS and uses a stub embedder; no embedding
-endpoint hit. `test_chunker.py` and `test_parsers.py` have no external
-dependencies beyond the format-specific parser libraries.
+Tests use stub embedding and LLM endpoints and temporary data directories (see
+`tests/conftest.py`), so they need no running services and don't touch your index.
+`test_chat_js_render.py` runs the real renderer in Node and skips if Node isn't
+installed.

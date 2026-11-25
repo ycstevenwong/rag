@@ -32,6 +32,8 @@
   const fileDropLabelEl = document.getElementById("file-drop-label");
   const pendingSectionEl = document.getElementById("pending-section");
   const pendingListEl = document.getElementById("pending-list");
+  const pendingNoticeEl = document.getElementById("pending-notice");
+  const docsNoticeEl = document.getElementById("docs-notice");
   const openDocsModalBtn = document.getElementById("open-docs-modal");
   const docsModalEl = document.getElementById("docs-modal");
   const docsModalCloseBtn = document.getElementById("docs-modal-close");
@@ -44,8 +46,13 @@
   const filterSourceTypeEl = document.getElementById("filter-source-type");
   const filterAppCodeEl = document.getElementById("filter-app-code");
   const filterTagsEl = document.getElementById("filter-tags");
+  const uploadHeadingEl = document.getElementById("upload-heading");
+  const labelHelpEl = document.getElementById("label-help");
+  const chatContextEl = document.getElementById("chat-context");
 
-  let sessionId = localStorage.getItem("card-rag.session") || newSessionId();
+  // Every page load is a new chat: an earlier conversation isn't shown again, so it
+  // mustn't shape the answers to new questions.
+  let sessionId = newSessionId();
   let currentSources = [];
   let isAdmin = false;
   let allDocs = [];
@@ -61,9 +68,10 @@
     }
     adminToggleEl.hidden = false;
     isAdmin = !!admin;
-    adminToggleEl.textContent = admin ? "🔒 admin" : "🔓 Login";
+    adminToggleEl.textContent = admin ? "Admin · Log out" : "Admin login";
     adminToggleEl.classList.toggle("is-admin", !!admin);
     anonymousOnlyFieldsEl.hidden = !!admin;
+    uploadHeadingEl.textContent = admin ? "Add a document" : "Suggest a document";
     uploadHintUserEl.hidden = !!admin;
     uploadHintAdminEl.hidden = !admin;
     if (typeof updateFileDropState === "function") updateFileDropState();
@@ -132,8 +140,8 @@
             <select data-field="app_code">${appCodeOptions}</select>
           </div>
           <div class="meta-row">
-            <input data-field="version" type="text" placeholder="version" value="${escapeHtml(item.version || "")}" />
-            <input data-field="functionality" type="text" placeholder="functionality" value="${escapeHtml(item.functionality || "")}" />
+            <select data-field="version" title="Version">${labelOptions(uploadVersionEl, item.version, "version")}</select>
+            <select data-field="functionality" title="Functionality">${labelOptions(uploadFunctionalityEl, item.functionality, "functionality")}</select>
           </div>
           <div class="meta-row">
             <input data-field="tags" type="text" placeholder="tags" value="${escapeHtml((item.tags || []).join(","))}" />
@@ -148,6 +156,19 @@
       `;
       pendingListEl.appendChild(li);
     }
+  }
+
+  // Options for reviewing or editing a label. An older value that isn't listed stays
+  // selectable, so editing another field doesn't silently change it.
+  function labelOptions(selectEl, current, name) {
+    const value = (current || "").toLowerCase();
+    const listed = Array.from(selectEl.options).map((o) => o.value).filter(Boolean);
+    const known = listed.some((v) => v.toLowerCase() === value);
+    const values = current && !known ? [current, ...listed] : listed;
+    const blank = `<option value="" disabled${current ? "" : " selected"}>${name} *</option>`;
+    return blank + values.map((v) =>
+      `<option value="${escapeHtml(v)}"${v.toLowerCase() === value ? " selected" : ""}>${escapeHtml(v)}</option>`
+    ).join("");
   }
 
   function _toggleAppCodeForManual(formEl) {
@@ -215,6 +236,7 @@
         const reader = r.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        let failed = false;
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -228,10 +250,17 @@
               const evt = JSON.parse(raw.slice(5).trim());
               if (evt.type === "stage") statusEl.textContent = `${evt.stage}…`;
               else if (evt.type === "progress") statusEl.textContent = `Embedding ${evt.done}/${evt.total}…`;
-              else if (evt.type === "error") { statusEl.classList.add("error"); statusEl.textContent = evt.error; }
+              else if (evt.type === "error") { failed = true; statusEl.classList.add("error"); statusEl.textContent = evt.error; }
             } catch {}
           }
         }
+        // A failed item stays queued. Re-rendering the list would wipe the error
+        // message, so leave this row in place with its button ready for a retry.
+        if (failed) {
+          btn.disabled = false;
+          return;
+        }
+        showNotice(pendingNoticeEl, `Approved and indexed ${li.querySelector(".name").textContent}.`);
         refreshPending();
         refreshDocs();
       } catch (err) {
@@ -314,6 +343,8 @@
 
   function updateUploadAppCodeVisibility() {
     const isManual = uploadSourceTypeEl.value === "manual";
+    labelHelpEl.hidden = !uploadSourceTypeEl.value;
+    labelHelpEl.textContent = isManual ? labelHelpEl.dataset.manual : labelHelpEl.dataset.single;
     uploadAppCodeEl.style.display = isManual ? "none" : "";
     if (isManual) uploadAppCodeEl.value = "";
   }
@@ -345,7 +376,6 @@
   });
   updateFileDropState();
   sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
-  localStorage.setItem("card-rag.session", sessionId);
 
   function newSessionId() {
     return crypto.randomUUID().replace(/-/g, "");
@@ -353,7 +383,6 @@
 
   newSessionBtn.addEventListener("click", () => {
     sessionId = newSessionId();
-    localStorage.setItem("card-rag.session", sessionId);
     sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     messagesEl.innerHTML = "";
     sourcesListEl.innerHTML = '<p class="empty">Cited sources will appear here.</p>';
@@ -396,9 +425,7 @@
     docListEl.hidden = false;
     docListEl.innerHTML = "";
     if (!unmanaged.length) {
-      const li = document.createElement("li");
-      li.innerHTML = '<span class="name" style="color:var(--muted)">No user uploads</span>';
-      docListEl.appendChild(li);
+      docListEl.hidden = true;
       // Update modal if it's open.
       if (!docsModalEl.hidden) renderDocsTable();
       return;
@@ -462,6 +489,7 @@
 
   openDocsModalBtn.addEventListener("click", () => {
     docsModalEl.hidden = false;
+    docsNoticeEl.hidden = true;
     docsSearchEl.value = "";
     docsFilterTypeEl.value = "";
     docsFilterAppEl.value = "";
@@ -492,8 +520,8 @@
             <option value="spec"${doc.source_type === "spec" ? " selected" : ""}>Spec</option>
           </select>
           <select data-field="app_code">${appCodeOptions}</select>
-          <input data-field="version" type="text" placeholder="version" value="${escapeHtml(doc.version || "")}" />
-          <input data-field="functionality" type="text" placeholder="functionality" value="${escapeHtml(doc.functionality || "")}" />
+          <select data-field="version" title="Version">${labelOptions(uploadVersionEl, doc.version, "version")}</select>
+          <select data-field="functionality" title="Functionality">${labelOptions(uploadFunctionalityEl, doc.functionality, "functionality")}</select>
           <input data-field="tags" type="text" placeholder="tags" value="${escapeHtml((doc.tags || []).join(","))}" />
           <button type="button" data-action="cancel-edit">Cancel</button>
           <button type="button" data-action="save-edit" class="primary">Save</button>
@@ -552,11 +580,15 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const doc = allDocs.find((d) => d.doc_id === docId);
       if (r.ok) {
         await refreshDocs();
+        showNotice(docsNoticeEl, `Saved ${doc ? doc.filename : "the changes"}.`);
       } else {
         btn.disabled = false;
-        alert("Update failed");
+        let reason = "";
+        try { reason = (await r.json()).error || ""; } catch {}
+        showNotice(docsNoticeEl, `Not saved: ${reason || `HTTP ${r.status}`}`, true);
       }
       return;
     }
@@ -564,9 +596,16 @@
       const docId = tr.dataset.docId;
       const doc = allDocs.find((d) => d.doc_id === docId);
       if (!doc) return;
-      if (!confirm(`Delete "${doc.filename}"?`)) return;
+      // Two entries can share a file name, so name the labels too.
+      const labels = [doc.source_type, doc.app_code, doc.version, doc.functionality].filter(Boolean).join(" · ");
+      if (!confirm(`Delete "${doc.filename}"${labels ? ` (${labels})` : ""}?`)) return;
       const r = await fetch(`/docs/${docId}`, { method: "DELETE" });
-      if (r.ok) await refreshDocs();
+      if (r.ok) {
+        await refreshDocs();
+        showNotice(docsNoticeEl, `Deleted ${doc.filename}${labels ? ` (${labels})` : ""}.`);
+      } else {
+        showNotice(docsNoticeEl, `Not deleted: HTTP ${r.status}`, true);
+      }
     }
   });
 
@@ -642,6 +681,12 @@
     });
 
     xhr.addEventListener("load", () => {
+      // A rejected upload is a JSON {"error": ...} reply, not an event stream.
+      if (!finalError && xhr.status >= 400) {
+        let reason = "";
+        try { reason = JSON.parse(xhr.responseText).error || ""; } catch {}
+        finalError = new Error(reason || `Upload failed (HTTP ${xhr.status}).`);
+      }
       if (finalError) {
         uploadStatus.classList.add("error");
         uploadStatus.textContent = finalError.message;
@@ -657,6 +702,7 @@
         }
         uploadProgress.value = 100;
         uploadForm.reset();
+        updateUploadAppCodeVisibility();
         updateFileDropState();
         refreshDocs();
       } else {
@@ -684,8 +730,37 @@
     }
   });
 
+  const appRequired = filterAppCodeEl.dataset.required === "true";
+
+  const defaultPlaceholder = inputEl.placeholder;
+
+  function updateSendState() {
+    const app = filterAppCodeEl.value;
+    sendBtn.disabled = appRequired && !app;
+    if (appRequired && !app) {
+      inputEl.placeholder = "Choose an app on the left to start asking.";
+    } else if (app) {
+      inputEl.placeholder = `Ask about the ${app} documents… (Enter to send, Shift+Enter for a new line)`;
+    } else {
+      inputEl.placeholder = defaultPlaceholder;
+    }
+    chatContextEl.hidden = !app;
+    chatContextEl.textContent = app ? `Answers come from the ${app} documents.` : "";
+  }
+  updateSendState();
+
+  filterAppCodeEl.addEventListener("change", () => {
+    // Earlier answers came from the previous app's document versions.
+    if (messagesEl.children.length) newSessionBtn.click();
+    updateSendState();
+  });
+
   formEl.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (appRequired && !filterAppCodeEl.value) {
+      filterAppCodeEl.focus();
+      return;
+    }
     const text = inputEl.value.trim();
     if (!text) return;
     inputEl.value = "";
@@ -741,7 +816,11 @@
       assistantEl.innerHTML = `<span style="color:var(--danger)">${escapeHtml(err.message)}</span>`;
     } finally {
       assistantEl.classList.remove("cursor");
-      sendBtn.disabled = false;
+      if (assistantEl.citationSources) {
+        assistantEl.citedNumbers = citedNumbers(assistantEl);
+        renderSources(currentSources, assistantEl.citedNumbers, DECLINED_RE.test(assistantEl.textContent));
+      }
+      updateSendState();
       inputEl.focus();
     }
   });
@@ -749,10 +828,11 @@
   function handleEvent(evt, assistantEl, onDelta) {
     if (evt.type === "session") {
       sessionId = evt.session_id;
-      localStorage.setItem("card-rag.session", sessionId);
       sessionIdEl.textContent = sessionId.slice(0, 8) + "…";
     } else if (evt.type === "sources") {
       currentSources = evt.sources || [];
+      assistantEl.citationSources = currentSources;
+      assistantEl.citationQuery = evt.rewritten_query;
       renderRewrittenQuery(evt.rewritten_query);
       renderSources(currentSources);
     } else if (evt.type === "delta") {
@@ -775,23 +855,42 @@
   }
 
   function renderMarkdown(text) {
-    let html = escapeHtml(text);
-    html = html.replace(/```([\s\S]*?)```/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`);
-    html = html.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    // Code is set aside behind NUL-delimited placeholders so that nothing below
+    // can rewrite it: `rows[1]` is not a citation.
+    const code = [];
+    const setAside = (html) => {
+      code.push(html);
+      return `\u0000${code.length - 1}\u0000`;
+    };
+    let html = escapeHtml(text.replace(/\u0000/g, ""));
+    html = html.replace(/```([\s\S]*?)```/g, (_, c) => setAside(`<pre><code>${c.trim()}</code></pre>`));
+    html = html.replace(/`([^`\n]+)`/g, (_, c) => setAside(`<code>${c}</code>`));
+    html = html.replace(/^([ \t]*)[*-] (?=\S)/gm, "$1• ");
     html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    html = html.replace(/\[(\d+(?:,\s*\d+)*)\]/g, (match, group) => {
-      const nums = group.split(/,\s*/);
-      return nums.map((n) =>
-        `<span class="citation" data-n="${n}">${n}</span>`
-      ).join("");
+    html = html.replace(/\[(\d+(?:\s*[-–,]\s*\d+)*)\]/g, (match, group) => {
+      // Only numbers with a source become chips, so an invented [12] or a literal
+      // [0] stays visible as plain text rather than a chip that does nothing.
+      const nums = group.split(/\s*,\s*/).flatMap((part) => {
+        const [lo, hi = lo] = part.split(/\s*[-–]\s*/).map(Number);
+        return currentSources.map((s) => s.n).filter((n) => n >= lo && n <= hi);
+      });
+      if (!nums.length) return match;
+      return nums.map((n) => `<span class="citation" data-n="${n}">${n}</span>`).join("");
     });
     html = html.replace(/\n/g, "<br>");
-    return html;
+    return html.replace(/\u0000(\d+)\u0000/g, (_, i) => code[Number(i)]);
   }
 
   function attachCitationHandlers(root) {
     root.querySelectorAll(".citation").forEach((el) => {
       el.onclick = () => {
+        // The panel shows the latest turn; an older answer's [n] means that
+        // answer's sources, so bring those back before looking up the card.
+        if (root.citationSources && root.citationSources !== currentSources) {
+          currentSources = root.citationSources;
+          renderSources(currentSources, root.citedNumbers);
+          renderRewrittenQuery(root.citationQuery);
+        }
         const n = parseInt(el.dataset.n, 10);
         const card = document.querySelector(`.source-card[data-n="${n}"]`);
         if (card) {
@@ -813,7 +912,30 @@
     rewrittenQueryEl.innerHTML = `<span class="label">Searched for</span>${escapeHtml(q)}`;
   }
 
-  function renderSources(sources) {
+  // The source numbers an answer's citation chips point to.
+  function citedNumbers(answerEl) {
+    return new Set(Array.from(answerEl.querySelectorAll(".citation"), (el) => Number(el.dataset.n)));
+  }
+
+  function sourceCard(s) {
+    const card = document.createElement("div");
+    card.className = "source-card";
+    card.dataset.n = s.n;
+    card.innerHTML = `
+      <div><span class="n">${s.n}</span><strong>${escapeHtml(s.filename)}</strong></div>
+      <div class="locator">${escapeHtml(s.locator)}</div>
+      <div class="snippet">${escapeHtml(s.snippet)}</div>
+    `;
+    return card;
+  }
+
+  // While an answer streams, every passage searched is shown. Once it's done, the
+  // ones it cites come first and the rest fold away under "Other passages searched".
+  // The system prompt has the model say it "couldn't find it in the documents".
+  const DECLINED_RE = /could(?:n['’]t| not) find/i;
+
+  // cited: the [n] numbers the answer used. declined: the answer says it found nothing.
+  function renderSources(sources, cited = null, declined = false) {
     sourcesListEl.classList.remove("flash");
     void sourcesListEl.offsetWidth;
     sourcesListEl.classList.add("flash");
@@ -822,17 +944,37 @@
       sourcesListEl.innerHTML = '<p class="empty">No sources retrieved.</p>';
       return;
     }
-    for (const s of sources) {
-      const card = document.createElement("div");
-      card.className = "source-card";
-      card.dataset.n = s.n;
-      card.innerHTML = `
-        <div><span class="n">${s.n}</span><strong>${escapeHtml(s.filename)}</strong></div>
-        <div class="locator">${escapeHtml(s.locator)}</div>
-        <div class="snippet">${escapeHtml(s.snippet)}</div>
-      `;
-      sourcesListEl.appendChild(card);
+    if (!cited) {
+      for (const s of sources) sourcesListEl.appendChild(sourceCard(s));
+      return;
     }
+    const used = sources.filter((s) => cited.has(s.n));
+    const others = sources.filter((s) => !cited.has(s.n));
+    if (!used.length && !declined) {
+      // The model sometimes answers from a passage without citing it, so don't
+      // claim it used nothing: show what it was given, to check the answer against.
+      sourcesListEl.innerHTML =
+        '<p class="empty">This answer doesn\'t cite any passage. Check it against the passages it was given:</p>';
+      for (const s of sources) sourcesListEl.appendChild(sourceCard(s));
+      return;
+    }
+    if (!used.length) {
+      sourcesListEl.innerHTML = '<p class="empty">This answer didn\'t use any of the documents.</p>';
+    }
+    for (const s of used) sourcesListEl.appendChild(sourceCard(s));
+    if (others.length) {
+      const details = document.createElement("details");
+      details.className = "other-sources";
+      details.innerHTML = `<summary>Other passages searched (${others.length})</summary>`;
+      for (const s of others) details.appendChild(sourceCard(s));
+      sourcesListEl.appendChild(details);
+    }
+  }
+
+  function showNotice(el, text, isError = false) {
+    el.textContent = text;
+    el.classList.toggle("error", isError);
+    el.hidden = false;
   }
 
   function escapeHtml(s) {

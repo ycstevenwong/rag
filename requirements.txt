@@ -13,3 +13,4 @@ requests>=2.31
 # Dev
 pytest>=8
 ruff>=0.6
+playwright>=1.40  # browser tests use the installed Chrome; they skip without it

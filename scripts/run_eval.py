@@ -75,8 +75,8 @@ def _chunk_satisfies(retrieved, file, item) -> bool:
     if expected_doc_ids and retrieved.doc is not None:
         if retrieved.doc.doc_id in expected_doc_ids:
             return True
-    if expected_filenames and file is not None:
-        fname = (file.filename or "").lower()
+    if expected_filenames and (retrieved.filename or file is not None):
+        fname = (retrieved.filename or file.filename or "").lower()
         if any(ef in fname for ef in expected_filenames):
             return True
     if expected_keywords:
@@ -95,7 +95,7 @@ def run_one(item, retriever, vector_store, top_n) -> EvalResult:
     rows: list[RetrievedRow] = []
     for rank, r in enumerate(results, start=1):
         file = vector_store.get_file(r.chunk.file_id)
-        fname = file.filename if file else "(unknown)"
+        fname = r.filename or "(unknown)"
         if rank <= 5:
             top_filenames.append(fname)
         matched = _chunk_satisfies(r, file, item)
@@ -156,7 +156,7 @@ def main() -> int:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store(cfg.BM25_PATH)
+    bm25_store = BM25Store.from_chunks(vector_store.chunks)
     retriever = HybridRetriever(vector_store, bm25_store, embedder)
 
     print(f"Running {len(items)} questions through the retriever (top_n={args.top_n})...\n")

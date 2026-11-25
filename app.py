@@ -1,7 +1,10 @@
 """Flask app: upload, chat (SSE), document management."""
 from __future__ import annotations
 
+import hmac
 import json
+import os
+import re
 import shutil
 import time
 import uuid
@@ -12,6 +15,7 @@ from pathlib import Path
 from flask import (
     Flask, Response, jsonify, render_template, request, session, stream_with_context
 )
+from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
 import config as cfg
@@ -19,11 +23,15 @@ from rag.bm25_store import BM25Store
 from rag.chat import ChatService
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
+from rag.metadata import canonical_label
+from rag.parsers import check_readable
 from rag.pending import PendingStore
 from rag.retriever import HybridRetriever
 from rag.vector_store import FaissStore
+from rag.writer_lock import acquire_writer_lock
 
-ALLOWED_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".txt", ".md"}
+# These characters map to a file name unchanged, so two IDs can't share a file.
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 # Login rate limit — per remote IP, in-memory, cleared on success.
 _LOGIN_WINDOW_SECONDS = 300   # 5 minutes
@@ -39,15 +47,56 @@ def _login_allowed(ip: str) -> bool:
 
 
 def _record_login_failure(ip: str) -> None:
-    _login_failures.setdefault(ip, []).append(time.time())
+    now = time.time()
+    # Forget addresses whose failures have all expired, so the dict can't grow forever.
+    for known in list(_login_failures):
+        if all(now - t >= _LOGIN_WINDOW_SECONDS for t in _login_failures[known]):
+            del _login_failures[known]
+    _login_failures.setdefault(ip, []).append(now)
+
+
+def _credentials_match(username, password) -> bool:
+    """Always runs the slow password hash, so a wrong username takes as long to
+    reject as a wrong password and valid usernames can't be found by timing."""
+    if not isinstance(username, str) or not isinstance(password, str):
+        return False
+    password_ok = check_password_hash(cfg.ADMIN_PASSWORD_HASH, password)
+    username_ok = hmac.compare_digest(username.encode(), cfg.ADMIN_USERNAME.encode())
+    return username_ok and password_ok
 
 
 def _is_admin() -> bool:
-    return bool(session.get("is_admin"))
+    return _admin_enabled() and bool(session.get("is_admin"))
 
 
 def _admin_enabled() -> bool:
     return bool(cfg.ADMIN_USERNAME and cfg.ADMIN_PASSWORD_HASH)
+
+
+def _checked_labels(source_type: str, app_code: str, version, functionality) -> tuple[str, str]:
+    """Return (version, functionality) in their listed spellings. Raises ValueError
+    for a label that isn't listed, or a non-manual document with an unknown app."""
+    if source_type != "manual" and cfg.APP_CODES and app_code not in cfg.APP_CODES:
+        raise ValueError(f"Choose an app from: {', '.join(cfg.APP_CODES)}.")
+    return (
+        canonical_label(version, cfg.VERSIONS, "version"),
+        canonical_label(functionality, cfg.FUNCTIONALITIES, "functionality"),
+    )
+
+
+def _version_rules_summary(version_map: dict) -> str:
+    """Which manual version each app uses, e.g. "SG: loan v2, everything else v1; MY: v2"."""
+    def versions(value) -> str:
+        return "/".join(value) if isinstance(value, list) else str(value)
+
+    parts = []
+    for app_code, rules in version_map.items():
+        named = [f"{functionality} {versions(v)}" for functionality, v in rules.items() if functionality != "*"]
+        if "*" in rules:
+            rest = versions(rules["*"])
+            named.append(f"everything else {rest}" if named else rest)
+        parts.append(f"{app_code}: {', '.join(named)}")
+    return "; ".join(parts)
 
 
 def _free_disk_gb() -> float:
@@ -79,7 +128,8 @@ def _cleanup_orphan_uploads() -> int:
     removed = 0
     try:
         for f in cfg.UPLOAD_DIR.iterdir():
-            if not f.is_file():
+            # Uploads have generated names; dotfiles like .gitkeep aren't uploads.
+            if not f.is_file() or f.name.startswith("."):
                 continue
             try:
                 if f.stat().st_mtime < cutoff:
@@ -92,12 +142,29 @@ def _cleanup_orphan_uploads() -> int:
     return removed
 
 
+def _is_reloader_parent() -> bool:
+    """With FLASK_DEBUG, Werkzeug's parent process only watches files and a child
+    serves requests, so the parent must not take the writer lock."""
+    return cfg.FLASK_DEBUG and os.environ.get("WERKZEUG_RUN_MAIN") != "true"
+
+
 def create_app() -> Flask:
+    if _admin_enabled() and cfg.FLASK_SECRET_KEY in cfg.INSECURE_SECRET_KEYS:
+        raise RuntimeError(
+            "Admin login is configured but FLASK_SECRET_KEY is a published default, "
+            "so anyone could forge an admin session. Set FLASK_SECRET_KEY to a long "
+            "random value in .env."
+        )
+    if not _is_reloader_parent():
+        acquire_writer_lock(cfg.INDEX_DIR / ".lock")
     app = Flask(__name__, static_folder="static", template_folder="templates")
+    if cfg.TRUSTED_PROXY_COUNT:
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=cfg.TRUSTED_PROXY_COUNT)
     app.config["SECRET_KEY"] = cfg.FLASK_SECRET_KEY
     app.config["MAX_CONTENT_LENGTH"] = cfg.MAX_UPLOAD_MB * 1024 * 1024
     app.config["SESSION_COOKIE_HTTPONLY"] = True
     app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = cfg.SESSION_COOKIE_SECURE
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=cfg.SESSION_LIFETIME_HOURS)
 
     embedder = Embedder(cfg.EMBEDDING_MODEL, cfg.EMBEDDING_BASE_URL, cfg.EMBEDDING_API_KEY)
@@ -107,11 +174,17 @@ def create_app() -> Flask:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store(cfg.BM25_PATH)
+    bm25_store = BM25Store.from_chunks(vector_store.chunks)
     ingest = IngestPipeline(vector_store, bm25_store, embedder)
     pending_store = PendingStore(cfg.PENDING_DIR)
     retriever = HybridRetriever(vector_store, bm25_store, embedder)
     chat_service = ChatService(retriever)
+
+    @app.errorhandler(413)
+    def too_large(_exc):
+        return jsonify({
+            "error": f"The file is larger than the {cfg.MAX_UPLOAD_MB} MB upload limit.",
+        }), 413
 
     @app.get("/")
     def index() -> str:
@@ -119,6 +192,9 @@ def create_app() -> Flask:
             "index.html",
             model=cfg.LLM_MODEL,
             app_codes=cfg.APP_CODES,
+            versions=cfg.VERSIONS,
+            functionalities=cfg.FUNCTIONALITIES,
+            version_rules=_version_rules_summary(cfg.APP_VERSION_MAP),
         )
 
     @app.get("/docs")
@@ -134,7 +210,7 @@ def create_app() -> Flask:
             f = vector_store.get_file(d.file_id)
             entry = asdict(d)
             if f is not None:
-                entry["filename"] = f.filename
+                entry["filename"] = d.filename or f.filename
                 entry["n_chunks"] = f.n_chunks
                 entry["uploaded_at"] = f.uploaded_at
             else:
@@ -152,16 +228,13 @@ def create_app() -> Flask:
         if not f.filename:
             return jsonify({"error": "Empty filename"}), 400
         ext = Path(f.filename).suffix.lower()
-        if ext not in ALLOWED_EXTENSIONS:
-            hint = ""
-            if ext == ".doc":
-                hint = " Open the file in Word and save as .docx, then re-upload."
-            elif ext == ".rtf":
-                hint = " Convert to .docx or .txt first."
-            elif ext in (".xls", ".ppt"):
-                modern = ".xlsx" if ext == ".xls" else ".pptx"
-                hint = f" Open the file and save as {modern}, then re-upload."
-            supported = ", ".join(sorted(e.lstrip(".") for e in ALLOWED_EXTENSIONS))
+        if ext not in cfg.ALLOWED_EXTENSIONS:
+            hint = (
+                " Open the file in Word and save as .docx, then re-upload."
+                if ext == ".doc"
+                else " Convert to .docx or .pdf first."
+            )
+            supported = ", ".join(sorted(e.lstrip(".") for e in cfg.ALLOWED_EXTENSIONS))
             return jsonify({
                 "error": f"Unsupported extension {ext}. Supported: {supported}.{hint}",
             }), 400
@@ -192,10 +265,21 @@ def create_app() -> Flask:
         # universal.
         if source_type == "manual":
             app_code = ""
+        try:
+            version, functionality = _checked_labels(source_type, app_code, version, functionality)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         f.save(dest)
 
         # Anonymous uploads go to the pending queue; admin uploads ingest now.
         if not _is_admin():
+            # Checked now, so a file that won't open never reaches the admin's queue
+            # looking like a real suggestion. Admin uploads report it while ingesting.
+            try:
+                check_readable(dest)
+            except ValueError as exc:
+                dest.unlink(missing_ok=True)
+                return jsonify({"error": str(exc)}), 400
             item = pending_store.add(
                 dest,
                 original,
@@ -268,14 +352,25 @@ def create_app() -> Flask:
         if doc is None:
             return jsonify({"error": "Not found"}), 404
         payload = request.get_json(silent=True) or {}
+        # A label indexed before the lists existed may stay as it is, but any change
+        # has to be to a listed one. Checked first, so a rejected edit changes nothing.
+        try:
+            version = doc.version
+            functionality = doc.functionality
+            if "version" in payload and str(payload["version"]).strip() != doc.version:
+                version = canonical_label(str(payload["version"]), cfg.VERSIONS, "version")
+            if "functionality" in payload and str(payload["functionality"]).strip() != doc.functionality:
+                functionality = canonical_label(
+                    str(payload["functionality"]), cfg.FUNCTIONALITIES, "functionality"
+                )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        doc.version = version
+        doc.functionality = functionality
         if "source_type" in payload:
             doc.source_type = (str(payload["source_type"]).strip().lower() or "other")
         if "app_code" in payload:
             doc.app_code = str(payload["app_code"]).strip()
-        if "version" in payload:
-            doc.version = str(payload["version"]).strip()
-        if "functionality" in payload:
-            doc.functionality = str(payload["functionality"]).strip()
         if "tags" in payload:
             raw_tags = payload["tags"]
             if isinstance(raw_tags, str):
@@ -303,12 +398,12 @@ def create_app() -> Flask:
         if not _login_allowed(ip):
             return jsonify({"error": "Too many failed attempts. Try again in a few minutes."}), 429
         payload = request.get_json(force=True) or {}
-        username = (payload.get("username") or "").strip()
-        password = payload.get("password") or ""
-        if (
-            username != cfg.ADMIN_USERNAME
-            or not check_password_hash(cfg.ADMIN_PASSWORD_HASH, password)
-        ):
+        if not isinstance(payload, dict):
+            payload = {}
+        username = payload.get("username") or ""
+        if isinstance(username, str):
+            username = username.strip()
+        if not _credentials_match(username, payload.get("password") or ""):
             _record_login_failure(ip)
             return jsonify({"error": "Invalid username or password."}), 401
         _login_failures.pop(ip, None)
@@ -353,6 +448,10 @@ def create_app() -> Flask:
         app_code = (payload.get("app_code") or item.app_code or "").strip()
         if source_type == "manual":
             app_code = ""
+        try:
+            version, functionality = _checked_labels(source_type, app_code, version, functionality)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
         raw_tags = payload.get("tags")
         if raw_tags is None:
             tags = list(item.tags or [])
@@ -374,11 +473,13 @@ def create_app() -> Flask:
                     functionality=functionality,
                     managed=True,
                 ):
+                    # Only a finished ingest removes the item. Errors and client
+                    # disconnects leave it queued so the admin can retry or reject.
+                    if event["type"] == "done":
+                        pending_store.remove(pending_id)
                     yield _sse(event)
             except Exception as exc:
                 yield _sse({"type": "error", "error": str(exc)})
-            finally:
-                pending_store.remove(pending_id)
 
         return Response(
             stream_with_context(event_stream()),
@@ -388,6 +489,8 @@ def create_app() -> Flask:
 
     @app.get("/chunks/<int:chunk_id>")
     def get_chunk(chunk_id: int):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
         c = vector_store.get_chunk(chunk_id)
         if c is None:
             return jsonify({"error": "not found"}), 404
@@ -395,6 +498,8 @@ def create_app() -> Flask:
 
     @app.get("/sessions/<session_id>")
     def get_session(session_id: str):
+        if not _is_admin():
+            return jsonify({"error": "Admin only"}), 403
         from rag.chat import _load_session
         return jsonify(_load_session(session_id))
 
@@ -402,11 +507,19 @@ def create_app() -> Flask:
     def chat():
         payload = request.get_json(force=True) or {}
         session_id = payload.get("session_id") or uuid.uuid4().hex
+        if not isinstance(session_id, str) or not _SESSION_ID_RE.fullmatch(session_id):
+            return jsonify({"error": "Invalid session_id"}), 400
         question = (payload.get("message") or "").strip()
         if not question:
             return jsonify({"error": "empty message"}), 400
 
         raw_filters = payload.get("filters") or {}
+        # The app decides which document versions apply. Without one, every version
+        # would be searched and the answer could silently come from the wrong one.
+        requested_app = raw_filters.get("app_code") if isinstance(raw_filters, dict) else None
+        if cfg.APP_CODES and requested_app not in cfg.APP_CODES:
+            supported = ", ".join(cfg.APP_CODES)
+            return jsonify({"error": f"Select an app first: {supported}."}), 400
         filters: dict | None = None
         if isinstance(raw_filters, dict):
             st = (raw_filters.get("source_type") or "").strip().lower()
@@ -438,6 +551,9 @@ def create_app() -> Flask:
     removed = _cleanup_orphan_uploads()
     if removed:
         print(f"[startup] cleaned {removed} orphan upload file(s) from {cfg.UPLOAD_DIR}", flush=True)
+    removed = pending_store.cleanup_orphans(cfg.UPLOAD_ORPHAN_MAX_AGE)
+    if removed:
+        print(f"[startup] cleaned {removed} orphan pending file(s) from {cfg.PENDING_DIR}", flush=True)
 
     return app
 
@@ -450,4 +566,4 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True, threaded=True)
+    app.run(host="127.0.0.1", port=5000, debug=cfg.FLASK_DEBUG, threaded=True)
