@@ -1,17 +1,16 @@
-"""Filtering and RRF fusion, using real stores and the stub embedder."""
+"""Filtering and ranking, using real stores and the stub embedder."""
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from rag.bm25_store import BM25Store
-from rag.retriever import HybridRetriever
+from rag.retriever import Retriever
 from rag.vector_store import ChunkRecord, DocRecord, FaissStore, FileRecord
 
 from .conftest import StubEmbedder
 
 
-def _build(root, files: dict[str, dict]) -> HybridRetriever:
+def _build(root, files: dict[str, dict]) -> Retriever:
     """files: {file_id: {"texts": [...], "doc": DocRecord kwargs}}"""
     store = FaissStore(root / "v", root / "c", root / "d", root / "f")
     embedder = StubEmbedder()
@@ -24,7 +23,7 @@ def _build(root, files: dict[str, dict]) -> HybridRetriever:
         store.add(np.stack([embedder.encode_query(r.text) for r in records]), records)
         store.add_file(FileRecord(file_id, file_id, f"{file_id}.pdf", 0.0, len(records)))
         store.add_doc(DocRecord(doc_id=f"doc-{file_id}", file_id=file_id, **spec["doc"]))
-    return HybridRetriever(store, BM25Store.from_chunks(store.chunks), embedder)
+    return Retriever(store, embedder)
 
 
 def test_filter_finds_matches_ranked_below_the_unfiltered_top(tmp_path):
@@ -40,7 +39,7 @@ def test_filter_finds_matches_ranked_below_the_unfiltered_top(tmp_path):
     })
 
     results = retriever.search(
-        "refund policy overview", k_vector=20, k_bm25=20, top_n=10, filters={"app_code": "app-b"}
+        "refund policy overview", k_vector=20, top_n=10, filters={"app_code": "app-b"}
     )
 
     assert sorted(r.chunk.text for r in results) == [
@@ -70,32 +69,30 @@ def test_filtered_ranks_stop_at_the_k_limits(tmp_path):
     })
 
     results = retriever.search(
-        "shared words", k_vector=3, k_bm25=3, top_n=50, filters={"app_code": "app-a"}
+        "shared words", k_vector=3, top_n=50, filters={"app_code": "app-a"}
     )
 
-    assert 3 <= len(results) <= 6
-    assert all(r.vector_rank is None or r.vector_rank < 3 for r in results)
-    assert all(r.bm25_rank is None or r.bm25_rank < 3 for r in results)
+    assert sorted(r.vector_rank for r in results) == [0, 1, 2]
 
 
-def test_rrf_scores_sum_reciprocal_ranks_across_both_lists(tmp_path):
+def test_results_are_ranked_by_cosine_similarity_to_the_query(tmp_path):
     retriever = _build(tmp_path, {
         "a": {
             "texts": ["kilo lima mike", "november oscar papa", "quebec romeo sierra"],
             "doc": {},
         },
     })
+    embedder = StubEmbedder()
+    query = embedder.encode_query("kilo lima mike")
 
-    results = retriever.search("kilo lima mike", k_vector=3, k_bm25=3, top_n=3, rrf_k=60)
+    results = retriever.search("kilo lima mike", k_vector=3, top_n=3)
 
-    top = results[0]
-    assert top.chunk.text == "kilo lima mike"
-    assert (top.vector_rank, top.bm25_rank) == (0, 0)
-    assert top.score == pytest.approx(1 / 61 + 1 / 61)
-    others = results[1:]
-    assert all(r.bm25_rank is None for r in others)
-    assert {r.vector_rank for r in others} == {1, 2}
-    assert {round(r.score, 6) for r in others} == {round(1 / 62, 6), round(1 / 63, 6)}
+    assert results[0].chunk.text == "kilo lima mike"
+    assert results[0].vector_rank == 0
+    for r in results:
+        assert r.score == pytest.approx(float(query @ embedder.encode_query(r.chunk.text)), abs=1e-5)
+    by_rank = sorted(results, key=lambda r: r.vector_rank)
+    assert [r.score for r in by_rank] == sorted((r.score for r in results), reverse=True)
 
 
 RULES = {

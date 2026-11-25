@@ -19,14 +19,13 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
 import config as cfg
-from rag.bm25_store import BM25Store
 from rag.chat import ChatService
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
 from rag.metadata import canonical_label
 from rag.parsers import check_readable
 from rag.pending import PendingStore
-from rag.retriever import HybridRetriever
+from rag.retriever import Retriever
 from rag.vector_store import FaissStore
 from rag.writer_lock import acquire_writer_lock
 
@@ -174,10 +173,9 @@ def create_app() -> Flask:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store.from_chunks(vector_store.chunks)
-    ingest = IngestPipeline(vector_store, bm25_store, embedder)
+    ingest = IngestPipeline(vector_store, embedder)
     pending_store = PendingStore(cfg.PENDING_DIR)
-    retriever = HybridRetriever(vector_store, bm25_store, embedder)
+    retriever = Retriever(vector_store, embedder)
     chat_service = ChatService(retriever)
 
     @app.errorhandler(413)

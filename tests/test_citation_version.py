@@ -9,7 +9,7 @@ from rag.vector_store import ChunkRecord, DocRecord
 def _retrieved(version: str, meta=None, doc=True) -> RetrievedChunk:
     chunk = ChunkRecord(1, "f", "The loan tenure is 7 years.", 5, meta or {"pages": [3]})
     record = DocRecord("d", "f", version=version) if doc else None
-    return RetrievedChunk(chunk, 0.1, 0, 0, "loan_manual.pdf", record)
+    return RetrievedChunk(chunk, 0.1, 0, "loan_manual.pdf", record)
 
 
 def test_locator_names_the_version():

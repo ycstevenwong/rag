@@ -4,8 +4,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from rag.bm25_store import BM25Store
-from rag.retriever import HybridRetriever
+from rag.retriever import Retriever
 from rag.vector_store import ChunkRecord, DocRecord, FaissStore, FileRecord
 
 
@@ -33,7 +32,7 @@ def _text_vec(text: str) -> np.ndarray:
     return v
 
 
-def test_hybrid_retrieves_keyword_match(tmp_path):
+def test_retrieves_the_closest_chunk(tmp_path):
     pytest.importorskip("faiss")
     vec_store = FaissStore(
         vectors_path=tmp_path / "v.faiss",
@@ -41,7 +40,6 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
         docs_path=tmp_path / "d.json",
         files_path=tmp_path / "f.json",
     )
-    bm25_store = BM25Store()
     embedder = StubEmbedder()
 
     texts = [
@@ -62,10 +60,9 @@ def test_hybrid_retrieves_keyword_match(tmp_path):
         uploaded_at=0.0, n_chunks=len(records),
     ))
     vec_store.add_doc(DocRecord(doc_id="doc-1", file_id=file_id))
-    bm25_store.rebuild((r.id, r.text) for r in records)
 
-    retriever = HybridRetriever(vec_store, bm25_store, embedder)
-    results = retriever.search("What does error code XK-204 mean?", k_vector=4, k_bm25=4, top_n=2)
+    retriever = Retriever(vec_store, embedder)
+    results = retriever.search("What does error code XK-204 mean?", k_vector=4, top_n=2)
     assert results
     assert any("XK-204" in r.chunk.text for r in results)
 
@@ -79,16 +76,14 @@ class _FakeVecStore:
         return kept, np.array([self._vecs[i] for i in kept], dtype=np.float32)
 
 
-def test_mmr_keeps_bm25_only_hit():
-    """A chunk ranked #1 by fusion (via BM25) must survive MMR even when its
-    vector is far from the others — MMR relevance is the fused score, not
-    query cosine."""
+def test_mmr_picks_the_most_relevant_chunk_first():
+    """The most relevant chunk leads even when its vector is far from the rest."""
     from rag.retriever import _mmr_select
 
     near = np.array([1.0, 0.0], dtype=np.float32)
     far = np.array([0.0, 1.0], dtype=np.float32)
     vecs = {0: far, 1: near, 2: near, 3: near}
-    fused = {0: 0.033, 1: 0.016, 2: 0.015, 3: 0.014}
+    scores = {0: 0.9, 1: 0.6, 2: 0.59, 3: 0.58}
 
-    picked = _mmr_select([0, 1, 2, 3], fused, _FakeVecStore(vecs), top_n=2)
+    picked = _mmr_select([0, 1, 2, 3], scores, _FakeVecStore(vecs), top_n=2)
     assert picked[0] == 0

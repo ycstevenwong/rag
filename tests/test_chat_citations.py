@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import pytest
 
-from rag.bm25_store import BM25Store
 from rag.chat import ChatService, _load_session
 from rag.ingest import IngestPipeline
-from rag.retriever import HybridRetriever
+from rag.retriever import Retriever
 from rag.vector_store import FaissStore
 
 from .conftest import StubEmbedder, StubLLM
@@ -17,14 +16,13 @@ def service(tmp_path, data_dirs):
     root = tmp_path / "index"
     root.mkdir()
     store = FaissStore(root / "v", root / "c", root / "d", root / "f")
-    bm25 = BM25Store()
     embedder = StubEmbedder()
-    pipeline = IngestPipeline(store, bm25, embedder)
+    pipeline = IngestPipeline(store, embedder)
     doc = tmp_path / "limits.txt"
     doc.write_text("The limit is 500 requests.")
     for _ in pipeline.ingest_stream(doc, "limits.txt"):
         pass
-    chat = ChatService(HybridRetriever(store, bm25, embedder))
+    chat = ChatService(Retriever(store, embedder))
     chat._provider = StubLLM()
     return chat
 

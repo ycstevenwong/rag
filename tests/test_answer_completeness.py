@@ -16,7 +16,7 @@ from .conftest import StubLLM
 
 class _OneDocument:
     def search(self, _query, **_kwargs):
-        return [RetrievedChunk(ChunkRecord(1, "f", "The fee is SGD 15.", 5), 0.9, 0, 0, "a.docx")]
+        return [RetrievedChunk(ChunkRecord(1, "f", "The fee is SGD 15.", 5), 0.9, 0, "a.docx")]
 
 
 class _SystemRecordingLLM(StubLLM):

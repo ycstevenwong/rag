@@ -12,7 +12,7 @@ from rag.vector_store import ChunkRecord
 
 class _OneDocument:
     def search(self, _query, **_kwargs):
-        return [RetrievedChunk(ChunkRecord(1, "f", "a fact", 2), 0.1, 0, 0, "a.pdf")]
+        return [RetrievedChunk(ChunkRecord(1, "f", "a fact", 2), 0.1, 0, "a.pdf")]
 
 
 class _PiecesLLM:

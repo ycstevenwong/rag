@@ -68,7 +68,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import config as cfg
-from rag.bm25_store import BM25Store
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
 from rag.metadata import canonical_label
@@ -243,8 +242,7 @@ def main() -> int:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store.from_chunks(vector_store.chunks)
-    ingest = IngestPipeline(vector_store, bm25_store, embedder)
+    ingest = IngestPipeline(vector_store, embedder)
 
     print(f"Ingesting {len(files)} document(s) from {target}\n")
     n_added = n_dup = n_err = 0

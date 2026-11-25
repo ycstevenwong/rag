@@ -7,10 +7,9 @@ import json
 import pytest
 
 import config
-from rag.bm25_store import BM25Store
 from rag.citations import build_context_block
 from rag.ingest import IngestPipeline
-from rag.retriever import HybridRetriever
+from rag.retriever import Retriever
 from rag.vector_store import DocRecord, FaissStore
 
 from .conftest import StubEmbedder, docx_bytes
@@ -22,7 +21,7 @@ def _open_store(root) -> FaissStore:
 
 @pytest.fixture
 def pipeline(tmp_path):
-    return IngestPipeline(_open_store(tmp_path), BM25Store(), StubEmbedder())
+    return IngestPipeline(_open_store(tmp_path), StubEmbedder())
 
 
 @pytest.fixture
@@ -72,7 +71,7 @@ def test_linked_upload_keeps_its_own_filename(pipeline, doc_path, tmp_path):
 def test_citation_uses_the_filename_of_the_doc_that_matched(pipeline, doc_path):
     _ingest(pipeline, doc_path, "guide_v1.txt", version="v1", app_code="app-a")
     _ingest(pipeline, doc_path, "guide_v2.txt", version="v2", app_code="app-b")
-    retriever = HybridRetriever(pipeline.vector_store, pipeline.bm25_store, StubEmbedder())
+    retriever = Retriever(pipeline.vector_store, StubEmbedder())
 
     results = retriever.search("shared alpha content", filters={"app_code": "app-b"})
 
@@ -113,7 +112,7 @@ def test_docs_json_without_filename_still_loads_and_falls_back(tmp_path, pipelin
     docs_file.write_text(json.dumps(stored), encoding="utf-8")
 
     store = _open_store(tmp_path)
-    retriever = HybridRetriever(store, BM25Store.from_chunks(store.chunks), StubEmbedder())
+    retriever = Retriever(store, StubEmbedder())
     results = retriever.search("shared alpha content")
 
     assert isinstance(store.docs[0], DocRecord)

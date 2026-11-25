@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from rag.bm25_store import BM25Store
 from rag.ingest import IngestPipeline
 from rag.vector_store import FaissStore
 
@@ -34,7 +33,7 @@ def pipeline(tmp_path):
     store = FaissStore(
         tmp_path / "v.faiss", tmp_path / "c.json", tmp_path / "d.json", tmp_path / "f.json"
     )
-    return IngestPipeline(store, BM25Store(), StubEmbedder())
+    return IngestPipeline(store, StubEmbedder())
 
 
 def _write(tmp_path, name, text):

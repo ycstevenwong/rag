@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pytest
 
-from rag.bm25_store import BM25Store
 from rag.ingest import IngestPipeline
 from rag.vector_store import FaissStore
 
@@ -17,7 +16,7 @@ def _open_store(root) -> FaissStore:
 @pytest.fixture
 def pipeline(tmp_path):
     store = _open_store(tmp_path)
-    return IngestPipeline(store, BM25Store(), StubEmbedder())
+    return IngestPipeline(store, StubEmbedder())
 
 
 def _write(tmp_path, name, text):

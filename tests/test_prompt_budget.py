@@ -15,7 +15,7 @@ from .conftest import StubLLM
 class _OneDocument:
     def search(self, _query, **_kwargs):
         chunk = ChunkRecord(1, "f", "short fact", 2)
-        return [RetrievedChunk(chunk, 0.1, 0, 0, "a.pdf")]
+        return [RetrievedChunk(chunk, 0.1, 0, "a.pdf")]
 
 
 # The system prompt plus about 25 tokens for the question and its one-source context.
