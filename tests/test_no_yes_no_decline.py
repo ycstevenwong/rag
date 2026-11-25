@@ -21,7 +21,7 @@ class _PiecesLLM:
     def __init__(self, pieces: list[str]):
         self.pieces = pieces
 
-    def stream_chat(self, _system, _messages):
+    def stream_chat(self, _system, _messages, on_finish=None):
         yield from self.pieces
 
     def complete(self, _prompt, max_tokens=256):

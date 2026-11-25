@@ -87,6 +87,28 @@ def test_answers_are_asked_for_at_temperature_zero(sse_provider):
     assert sse_provider.state["request"]["temperature"] == 0
 
 
+def test_answers_have_a_length_limit(sse_provider):
+    """With no limit, an answer that kept repeating itself ran for hours and the
+    chat never ended. Normal answers were under 500 tokens."""
+    provider = sse_provider(_delta("ok"))
+
+    _stream(provider)
+
+    assert sse_provider.state["request"]["max_tokens"] == 1500
+
+
+def test_it_reports_why_the_answer_ended(sse_provider):
+    provider = sse_provider(
+        _delta("a long answer"), {"choices": [{"delta": {}, "finish_reason": "length"}]}
+    )
+    reasons = []
+
+    text = "".join(provider.stream_chat("system", [], on_finish=reasons.append))
+
+    assert text == "a long answer"
+    assert reasons == ["length"]
+
+
 def test_the_temperature_can_be_configured(sse_provider):
     provider = sse_provider(_delta("ok"))
     provider.temperature = 0.3

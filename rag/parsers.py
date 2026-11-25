@@ -37,6 +37,43 @@ def parse(path: Path) -> list[Block]:
     raise ValueError(f"Unsupported file type: {ext}")
 
 
+def check_readable(path: Path) -> None:
+    """Raise ValueError with a plain reason if the file can't be opened as its
+    type. Cheap enough to run on every upload, before a suggestion is queued."""
+    ext = path.suffix.lower()
+    if ext == ".pdf":
+        _open_pdf(path).close()
+    elif ext == ".docx":
+        _open_docx(path)
+
+
+def _open_pdf(path: Path):
+    import fitz  # PyMuPDF
+
+    try:
+        doc = fitz.open(str(path), filetype="pdf")
+    except (fitz.FileDataError, RuntimeError) as exc:
+        raise ValueError(
+            "This file isn't a valid PDF. Open it and save it as a PDF again, then re-upload."
+        ) from exc
+    if doc.needs_pass:
+        doc.close()
+        raise ValueError("This PDF is password-protected. Remove the password and re-upload.")
+    return doc
+
+
+def _open_docx(path: Path):
+    from docx import Document
+    from docx.opc.exceptions import PackageNotFoundError
+
+    try:
+        return Document(str(path))
+    except (PackageNotFoundError, zipfile.BadZipFile, KeyError) as exc:
+        raise ValueError(
+            "This file isn't a valid Word document. Open it in Word and save it as .docx, then re-upload."
+        ) from exc
+
+
 def _push_heading(stack: list[tuple[int, str]], level: int, text: str) -> None:
     """Close every open section at this level or deeper, then open this one.
     Compares levels rather than stack depth, since documents can skip levels."""
@@ -141,8 +178,6 @@ def parse_pdf(path: Path) -> list[Block]:
     Falls back to legacy paragraph-mode parsing if the structural extraction
     can't determine a body font (very small / image-only / odd PDFs).
     """
-    import fitz  # PyMuPDF
-
     from . import config_facade as cfg
 
     max_font = float(cfg.PDF_MAX_FONT_SIZE or 0)  # 0 = disabled
@@ -170,15 +205,8 @@ def parse_pdf(path: Path) -> list[Block]:
         lower = text.strip().lower()
         return any(label in lower for label in field_desc_labels)
 
+    doc = _open_pdf(path)
     try:
-        doc = fitz.open(str(path), filetype="pdf")
-    except (fitz.FileDataError, RuntimeError) as exc:
-        raise ValueError(
-            "This file isn't a valid PDF. Open it and save it as a PDF again, then re-upload."
-        ) from exc
-    try:
-        if doc.needs_pass:
-            raise ValueError("This PDF is password-protected. Remove the password and re-upload.")
         # First pass — plain text per page, used to identify repeating
         # headers/footers we should drop from the structured pass.
         pages_text: list[str] = []
@@ -386,20 +414,12 @@ def _heading_level_from_size(size: float, body_size: float) -> int:
 
 
 def parse_docx(path: Path) -> list[Block]:
-    from docx import Document
     from docx.table import Table
     from docx.text.paragraph import Paragraph
 
     from . import config_facade as cfg
 
-    from docx.opc.exceptions import PackageNotFoundError
-
-    try:
-        doc = Document(str(path))
-    except (PackageNotFoundError, zipfile.BadZipFile, KeyError) as exc:
-        raise ValueError(
-            "This file isn't a valid Word document. Open it in Word and save it as .docx, then re-upload."
-        ) from exc
+    doc = _open_docx(path)
     blocks: list[Block] = []
     heading_stack: list[tuple[int, str]] = []
     stop_keywords = [k.lower() for k in cfg.DOCX_STOP_HEADINGS if k.strip()]

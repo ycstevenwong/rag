@@ -42,6 +42,12 @@ def _searched_for(question: str) -> tuple[str, StubLLM]:
         "What is the maximum loan tenure?",
         "Berapakah tempoh pinjaman maksimum?",
         "Is the processing fee waived for personal loans?",
+        # "it" here points forward to the "to ..." part, not back at the conversation.
+        # After a Reg E question, the first was searched as the Reg E question again.
+        "How much does it cost to replace a lost debit card?",
+        "How long does it take to deliver a replacement card?",
+        "Is it possible to waive the replacement fee?",
+        "Is it necessary to block the old card first?",
     ],
 )
 def test_a_question_that_stands_on_its_own_is_searched_as_asked(data_dirs, question):
@@ -55,6 +61,9 @@ def test_a_question_that_stands_on_its_own_is_searched_as_asked(data_dirs, quest
     "question",
     [
         "When does it take effect?",
+        "How much does it cost?",
+        "Is it possible?",
+        "How long does it take for smaller banks?",
         "What about this for smaller banks?",
         "And for MY?",
         "Why?",
@@ -73,3 +82,12 @@ def test_the_rewrite_keeps_the_follow_ups_language(data_dirs):
     _, llm = _searched_for("When does it take effect?")
 
     assert "same language as the follow-up" in llm.complete_calls[0]
+
+
+def test_the_rewrite_keeps_the_follow_ups_own_words(data_dirs):
+    """A rewrite replaced "How much does it cost to replace a lost debit card?" with
+    the earlier Reg E question, so the search never looked for the fee."""
+    _, llm = _searched_for("When does it take effect?")
+
+    assert "Keep the follow-up's own words" in llm.complete_calls[0]
+    assert "return it unchanged" in llm.complete_calls[0]

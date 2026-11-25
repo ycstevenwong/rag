@@ -96,7 +96,7 @@ class StubLLM:
         self.stream_calls: list[list[dict]] = []
         self.complete_calls: list[str] = []
 
-    def stream_chat(self, _system: str, messages: list[dict]):
+    def stream_chat(self, _system: str, messages: list[dict], on_finish=None):
         self.stream_calls.append(messages)
         yield self.reply
 

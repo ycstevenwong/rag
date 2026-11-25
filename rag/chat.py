@@ -22,12 +22,13 @@ Rules:
 - If no source directly answers the question, reply only that you couldn't find it in the documents. Never start that reply with "Yes" or "No", and do not cite anything.
 - A source not mentioning something is not evidence for or against it.
 - After each factual claim, cite the number of a source that directly states it, e.g. [1] or [2][3]. Do not cite a source just because it covers a related topic.
+- If a source gives a condition, exception, waiver or limit for the fact asked about, include it. Do not add other facts the question did not ask about.
 - Use quotation marks only for wording copied exactly from a source.
 - Prefer precise technical language; give exact identifiers (function names, error codes, parameters) when relevant.
 - When relevant, structure answers with short bullet lists or fenced code blocks.
 """
 
-REWRITE_PROMPT = """Given the conversation history and a follow-up message, rewrite the follow-up as a standalone question that can be understood without the history. Take from the history only what the follow-up refers to. Write it in the same language as the follow-up. Output only the rewritten question, no preamble.
+REWRITE_PROMPT = """Given the conversation history and a follow-up message, rewrite the follow-up as a standalone question that can be understood without the history. Keep the follow-up's own words and meaning. Only replace the words that point back (such as it, this, they) with what they refer to in the history. If the follow-up already makes sense on its own, return it unchanged. Write it in the same language as the follow-up. Output only the rewritten question, no preamble.
 
 History:
 {history}
@@ -37,6 +38,15 @@ Follow-up: {question}
 Standalone question:"""
 
 NO_SOURCES_REPLY = "I couldn't find anything about that in the documents for this app."
+
+# Sent after each question. Earlier answers reach the model without their [n]
+# markers (those numbers meant that turn's sources), so a few turns in it would
+# copy them and stop citing. Being the last thing it reads outweighs that.
+ANSWER_REMINDER = "Answer from the sources above and cite each fact as [n]."
+
+# Shown, not saved, when an answer is stopped for repeating itself or for reaching
+# the length limit. Saved, the model would copy it into later answers.
+CUT_SHORT_NOTE = "\n\n(This answer was cut short because it was getting too long.)"
 
 _CITATION_RE = re.compile(r"[ \t]*(?:\[\d+(?:,\s*\d+)*\])+")
 _CODE_SPAN_RE = re.compile(r"(```[\s\S]*?```|`[^`\n]+`)")
@@ -98,6 +108,8 @@ class ChatService:
             yield {"type": "delta", "text": NO_SOURCES_REPLY}
         else:
             user_message = f"Context:\n{context_text}\n\nQuestion: {question}"
+            if ANSWER_REMINDER:
+                user_message += f"\n\n{ANSWER_REMINDER}"
             history_budget = (
                 cfg.CONTEXT_TOKEN_BUDGET - count_tokens(SYSTEM_PROMPT) - count_tokens(user_message)
             )
@@ -106,22 +118,34 @@ class ChatService:
                 {"role": "user", "content": user_message},
             ]
             yes_no = _YesNoBeforeDecline()
+            repeats = _RepeatGuard()
+            finish_reasons: list[str] = []
+            stream = provider.stream_chat(SYSTEM_PROMPT, messages, on_finish=finish_reasons.append)
             try:
-                for delta in provider.stream_chat(SYSTEM_PROMPT, messages):
+                for delta in stream:
                     text = yes_no.feed(delta)
                     if text:
                         full_reply.append(text)
                         yield {"type": "delta", "text": text}
+                        if repeats.feed(text):
+                            break
             except Exception as exc:
                 text = yes_no.finish()
                 if text:
                     yield {"type": "delta", "text": text}
                 yield {"type": "error", "error": f"{type(exc).__name__}: {exc}"}
                 return
+            finally:
+                # Closes the request, so the model stops writing a stopped answer.
+                close = getattr(stream, "close", None)
+                if close:
+                    close()
             text = yes_no.finish()
             if text:
                 full_reply.append(text)
                 yield {"type": "delta", "text": text}
+            if repeats.stopped or "length" in finish_reasons:
+                yield {"type": "delta", "text": CUT_SHORT_NOTE}
 
         assistant_text = "".join(full_reply)
         try:
@@ -165,6 +189,15 @@ _CONTINUATIONS = (
 # Malay/Indonesian "-nya" often means "its" ("syaratnya": its conditions).
 _NOT_REFERENCE_NYA = frozenset({"hanya", "punya", "tanya", "bertanya"})
 _WORD_RE = re.compile(r"[\w'’]+")
+# "it" that points forward to a "to ..." clause, as in "How much does it cost to
+# replace a card?" or "Is it possible to waive the fee?". Without the clause
+# ("How much does it cost?") the "it" still points back.
+_FORWARD_IT_RE = re.compile(
+    r"(?:\bit\s+(?:costs?|takes?|took)\b"
+    r"|\b(?:is|was|will|would)\s+it\s+(?:be\s+)?"
+    r"(?:possible|necessary|required|mandatory|allowed|permitted|ok|okay|safe|advisable|worth|important|enough)\b)"
+    r"(?=.*\bto\s+\w)"
+)
 
 
 def _refers_back(question: str) -> bool:
@@ -175,6 +208,7 @@ def _refers_back(question: str) -> bool:
     words = [w.replace("’", "'") for w in _WORD_RE.findall(text)]
     if len(words) <= 2 or text.startswith(_CONTINUATIONS):
         return True
+    words = [w.replace("’", "'") for w in _WORD_RE.findall(_FORWARD_IT_RE.sub(" ", text))]
     return any(
         w in _REFERENCE_WORDS or (w.endswith("nya") and len(w) > 5 and w not in _NOT_REFERENCE_NYA)
         for w in words
@@ -248,6 +282,34 @@ class _YesNoBeforeDecline:
         self._released = True
         self._held = ""
         return text
+
+
+# Shorter lines, such as "}" or a bare "- Yes [1]", repeat in normal answers.
+_MIN_REPEAT_LINE = 40
+
+
+class _RepeatGuard:
+    """Says when the answer writes a long line it already wrote. At temperature 0
+    the model sometimes loops, writing the same sentences until stopped."""
+
+    def __init__(self) -> None:
+        self._partial = ""
+        self._seen: set[str] = set()
+        self._in_code = False
+        self.stopped = False
+
+    def feed(self, text: str) -> bool:
+        *lines, self._partial = (self._partial + text).split("\n")
+        for line in lines:
+            line = " ".join(line.split())
+            if line.startswith("```"):
+                self._in_code = not self._in_code
+            elif not self._in_code and len(line) >= _MIN_REPEAT_LINE:
+                if line in self._seen:
+                    self.stopped = True
+                    return True
+                self._seen.add(line)
+        return False
 
 
 def _session_path(session_id: str) -> Path:

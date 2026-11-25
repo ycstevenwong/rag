@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import json
-from typing import Iterator
+from typing import Callable, Iterator
 
 import requests
+
+# An answer that kept repeating itself ran for hours with no limit. Normal answers
+# are under 500 tokens.
+ANSWER_MAX_TOKENS = 1500
 
 
 class LLMProvider:
@@ -19,7 +23,14 @@ class LLMProvider:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self.api_key}"}
 
-    def stream_chat(self, system: str, messages: list[dict]) -> Iterator[str]:
+    def stream_chat(
+        self,
+        system: str,
+        messages: list[dict],
+        on_finish: Callable[[str], None] | None = None,
+    ) -> Iterator[str]:
+        """Yield the answer's text as it arrives. on_finish gets the reason the
+        model stopped, such as "stop" or "length", when the server sends one."""
         full_messages = [{"role": "system", "content": system}, *messages]
         with requests.post(
             f"{self.base_url}/v1/chat/completions",
@@ -29,6 +40,7 @@ class LLMProvider:
                 "messages": full_messages,
                 "stream": True,
                 "temperature": self.temperature,
+                "max_tokens": ANSWER_MAX_TOKENS,
             },
             stream=True,
             timeout=300,
@@ -49,10 +61,13 @@ class LLMProvider:
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue
-                delta = choices[0].get("delta", {})
+                delta = choices[0].get("delta") or {}
                 content = delta.get("content")
                 if content:
                     yield content
+                finish_reason = choices[0].get("finish_reason")
+                if finish_reason and on_finish:
+                    on_finish(finish_reason)
 
     def complete(self, prompt: str, max_tokens: int = 256) -> str:
         resp = requests.post(

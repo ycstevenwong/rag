@@ -24,6 +24,7 @@ from rag.chat import ChatService
 from rag.embeddings import Embedder
 from rag.ingest import IngestPipeline
 from rag.metadata import canonical_label
+from rag.parsers import check_readable
 from rag.pending import PendingStore
 from rag.retriever import HybridRetriever
 from rag.vector_store import FaissStore
@@ -272,6 +273,13 @@ def create_app() -> Flask:
 
         # Anonymous uploads go to the pending queue; admin uploads ingest now.
         if not _is_admin():
+            # Checked now, so a file that won't open never reaches the admin's queue
+            # looking like a real suggestion. Admin uploads report it while ingesting.
+            try:
+                check_readable(dest)
+            except ValueError as exc:
+                dest.unlink(missing_ok=True)
+                return jsonify({"error": str(exc)}), 400
             item = pending_store.add(
                 dest,
                 original,

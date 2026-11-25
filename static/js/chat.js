@@ -818,7 +818,7 @@
       assistantEl.classList.remove("cursor");
       if (assistantEl.citationSources) {
         assistantEl.citedNumbers = citedNumbers(assistantEl);
-        renderSources(currentSources, assistantEl.citedNumbers);
+        renderSources(currentSources, assistantEl.citedNumbers, DECLINED_RE.test(assistantEl.textContent));
       }
       updateSendState();
       inputEl.focus();
@@ -931,7 +931,11 @@
 
   // While an answer streams, every passage searched is shown. Once it's done, the
   // ones it cites come first and the rest fold away under "Other passages searched".
-  function renderSources(sources, cited = null) {
+  // The system prompt has the model say it "couldn't find it in the documents".
+  const DECLINED_RE = /could(?:n['’]t| not) find/i;
+
+  // cited: the [n] numbers the answer used. declined: the answer says it found nothing.
+  function renderSources(sources, cited = null, declined = false) {
     sourcesListEl.classList.remove("flash");
     void sourcesListEl.offsetWidth;
     sourcesListEl.classList.add("flash");
@@ -946,6 +950,14 @@
     }
     const used = sources.filter((s) => cited.has(s.n));
     const others = sources.filter((s) => !cited.has(s.n));
+    if (!used.length && !declined) {
+      // The model sometimes answers from a passage without citing it, so don't
+      // claim it used nothing: show what it was given, to check the answer against.
+      sourcesListEl.innerHTML =
+        '<p class="empty">This answer doesn\'t cite any passage. Check it against the passages it was given:</p>';
+      for (const s of sources) sourcesListEl.appendChild(sourceCard(s));
+      return;
+    }
     if (!used.length) {
       sourcesListEl.innerHTML = '<p class="empty">This answer didn\'t use any of the documents.</p>';
     }

@@ -268,6 +268,26 @@ def test_a_reply_that_cites_nothing_says_no_source_was_used(live_app, page, monk
     assert "Other passages searched (2)" in page.inner_text("#sources-list details.other-sources summary")
 
 
+def test_an_answer_without_citations_shows_the_passages_to_check_it_against(live_app, page, monkeypatch):
+    """The model sometimes answers from a passage without citing it. Saying it
+    "didn't use any of the documents" told staff a correct answer was made up."""
+    from .conftest import StubLLM
+
+    monkeypatch.setattr(StubLLM, "reply", "Call the hotline 1800-555-0199.")
+    app, base_url = live_app
+    _two_documents(app)
+    _open(page, base_url)
+    page.select_option("#filter-app-code", "SG")
+
+    _ask(page, "zebra quota", 1)
+
+    text = page.inner_text("#sources-list")
+    assert "didn't use any of the documents" not in text
+    assert "This answer doesn't cite any passage. Check it against the passages it was given:" in text
+    assert page.locator("#sources-list > .source-card").count() == 2
+    assert page.locator("#sources-list details.other-sources").count() == 0
+
+
 def _admin_upload_through_the_form(page, name: str, text: str) -> None:
     page.set_input_files(
         "#file-input",
