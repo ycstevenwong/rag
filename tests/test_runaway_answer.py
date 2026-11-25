@@ -14,7 +14,7 @@ LOOPING = "The FDIC insures deposits up to $250,000 per depositor. [1]\n\n"
 
 class _OneDocument:
     def search(self, _query, **_kwargs):
-        return [RetrievedChunk(ChunkRecord(1, "f", "FDIC insurance is $250,000.", 5), 0.9, 0, 0, "a.pdf")]
+        return [RetrievedChunk(ChunkRecord(1, "f", "FDIC insurance is $250,000.", 5), 0.9, 0, "a.pdf")]
 
 
 class _LoopingLLM(StubLLM):

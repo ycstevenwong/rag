@@ -5,24 +5,7 @@ import threading
 
 import numpy as np
 
-from rag.bm25_store import BM25Store
 from rag.vector_store import ChunkRecord, DocRecord, FaissStore, FileRecord
-
-
-def test_bm25_search_during_rebuild_uses_the_previous_index():
-    store = BM25Store()
-    store.rebuild([(i, f"common term{i}") for i in range(5)])
-    seen = []
-
-    def corpus():
-        yield (0, "common term0")
-        seen.append(store.search("term3", 5))  # rebuild is partway through
-        for i in range(1, 5):
-            yield (i, f"common term{i}")
-
-    store.rebuild(corpus())
-
-    assert [[cid for cid, _ in result] for result in seen] == [[3]]
 
 
 def _unit(i: int, dim: int = 4) -> np.ndarray:

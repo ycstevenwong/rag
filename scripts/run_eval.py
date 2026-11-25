@@ -12,7 +12,7 @@ Usage:
     python scripts/run_eval.py --verbose                # print every question
 
 WARNING: do NOT run this while `python app.py` is also running. The retriever
-holds its own in-memory copy of the FAISS/BM25 stores; concurrent persists
+holds its own in-memory copy of the FAISS store; concurrent persists
 from the running app would corrupt the index.
 """
 from __future__ import annotations
@@ -38,9 +38,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import config as cfg
-from rag.bm25_store import BM25Store
 from rag.embeddings import Embedder
-from rag.retriever import HybridRetriever
+from rag.retriever import Retriever
 from rag.vector_store import FaissStore
 
 
@@ -156,8 +155,7 @@ def main() -> int:
         docs_path=cfg.DOCS_PATH,
         files_path=cfg.FILES_PATH,
     )
-    bm25_store = BM25Store.from_chunks(vector_store.chunks)
-    retriever = HybridRetriever(vector_store, bm25_store, embedder)
+    retriever = Retriever(vector_store, embedder)
 
     print(f"Running {len(items)} questions through the retriever (top_n={args.top_n})...\n")
 

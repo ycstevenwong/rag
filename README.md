@@ -1,7 +1,7 @@
 # card-rag
 
 A local-first Retrieval-Augmented Generation app for technical documents.
-Flask UI, no database (all state in files), hybrid retrieval (vector + BM25),
+Flask UI, no database (all state in files), vector retrieval with per-app filtering,
 multi-turn chat with inline citations, and self-hosted embedding + LLM
 endpoints called over HTTP.
 
@@ -13,8 +13,7 @@ endpoints called over HTTP.
 | Embeddings     | OpenAI-compatible HTTP endpoint (`/v1/embeddings`), bearer-token auth |
 | LLM            | OpenAI-compatible HTTP endpoint (`/v1/chat/completions`), bearer-token auth |
 | Vector index   | FAISS (`IndexFlatIP`, cosine via normalized vectors)        |
-| Keyword index  | `rank_bm25` BM25Okapi                                       |
-| Fusion         | Reciprocal Rank Fusion (no extra deps)                      |
+| Ranking        | Vector similarity, then MMR for variety (no keyword index)  |
 | Docs           | PDF (PyMuPDF) and DOCX (python-docx) only                   |
 | Persistence    | Plain files under `data/` — no database                     |
 
@@ -49,15 +48,13 @@ python app.py
    `model`, `input`, `encoding_format`, `input_type`). Vectors are L2-normalized
    and appended to a FAISS `IndexFlatIP`. Chunk text and metadata persist to
    `data/index/chunks.json`.
-4. **BM25** index is rebuilt in memory over the full corpus, at startup and after
-   each change. It isn't saved, and an old `data/index/bm25.pkl` is ignored and
-   can be deleted.
-5. **Query**: if there's conversation history, the LLM rewrites the question as a
-   standalone query. Vector and BM25 searches run in parallel; results are fused
-   with RRF; metadata filters (source_type / app_code / tags / version policy)
-   are applied to the candidate set; the top N chunks are formatted with
-   `[1]`, `[2]`, … and sent to the LLM.
-6. **Answer** streams back via SSE. The LLM endpoint speaks OpenAI-compatible
+4. **Query**: if a follow-up refers back to the conversation, the LLM rewrites it
+   as a standalone query. The vector search ranks chunks by similarity; metadata
+   filters (source_type / app_code / tags / version policy) are applied to the
+   candidates; MMR picks a varied top N, formatted with `[1]`, `[2]`, … and sent
+   to the LLM. There is no keyword (BM25) search, so exact codes and section
+   numbers are found only as well as the embedding model matches them.
+5. **Answer** streams back via SSE. The LLM endpoint speaks OpenAI-compatible
    server-sent events (`data: {...}\n\n`, terminated by `data: [DONE]`). The UI
    parses `[n]` markers into clickable citations linked to a sources panel.
 
@@ -349,7 +346,7 @@ where possible.
 ### Run
 
 ```bash
-# Stop Flask first (the eval script loads the FAISS / BM25 store
+# Stop Flask first (the eval script loads the FAISS store
 # in-process; concurrent persists from a running app risk corruption).
 
 # Baseline summary — uses data/eval/eval.json, top-N=10
@@ -449,9 +446,8 @@ Curated manuals and specs only enter through `scripts/ingest_corpus.py`.
 - `rag/llm/__init__.py` — OpenAI-compatible HTTP LLM, SSE streaming.
 - `rag/vector_store.py` — `FileRecord` / `DocRecord` / `ChunkRecord` + FAISS
   with atomic persistence and in-memory lookup indices.
-- `rag/bm25_store.py` — in-memory BM25, rebuilt from chunks.
 - `rag/writer_lock.py` — OS lock that keeps a second process off the index.
-- `rag/retriever.py` — parallel hybrid search, RRF, metadata-aware filtering
+- `rag/retriever.py` — vector search, MMR, metadata-aware filtering
   with auto-resolved version policy.
 - `rag/ingest.py` — orchestrates parse → chunk → embed → persist; emits per-batch
   progress events; reuses chunks when a file is re-ingested under new metadata.
@@ -486,7 +482,6 @@ CHUNK_OVERLAP=80
 
 # Retrieval
 TOP_K_VECTOR=20
-TOP_K_BM25=20
 TOP_N_FINAL=6
 CONTEXT_TOKEN_BUDGET=16000
 
@@ -502,7 +497,7 @@ TRUSTED_PROXY_COUNT=0        # reverse proxies in front of the app, for the logi
 
 `data/index/` holds `vectors.faiss`, `chunks.json`, `files.json`, `docs.json`,
 `index_meta.json` (next chunk ID) and `.lock`. `bm25.pkl` is no longer used, and any
-old copy can be deleted.
+old copy can be deleted. `TOP_K_BM25` is ignored if still set.
 
 If a crash leaves the vector and chunk counts different, startup stops with an
 error rather than returning wrong results. Delete the index files and re-ingest to

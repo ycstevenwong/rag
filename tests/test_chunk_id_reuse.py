@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import pytest
 
-from rag.bm25_store import BM25Store
 from rag.ingest import IngestPipeline
 from rag.vector_store import FaissStore
 
@@ -12,7 +11,7 @@ from .conftest import StubEmbedder
 
 def _open_pipeline(root) -> IngestPipeline:
     store = FaissStore(root / "v", root / "c", root / "d", root / "f")
-    return IngestPipeline(store, BM25Store.from_chunks(store.chunks), StubEmbedder())
+    return IngestPipeline(store, StubEmbedder())
 
 
 def _ingest(pipeline, root, name: str, text: str) -> None:

@@ -12,7 +12,7 @@ from .conftest import StubLLM
 
 class _OneDocument:
     def search(self, _query, **_kwargs):
-        return [RetrievedChunk(ChunkRecord(1, "f", "The fee is SGD 15.", 5), 0.9, 0, 0, "a.docx")]
+        return [RetrievedChunk(ChunkRecord(1, "f", "The fee is SGD 15.", 5), 0.9, 0, "a.docx")]
 
 
 def test_the_question_ends_with_a_reminder_to_cite(data_dirs):

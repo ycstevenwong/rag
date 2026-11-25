@@ -12,7 +12,7 @@ from . import config_facade as cfg
 from .chunker import count_tokens
 from .citations import build_context_block
 from .llm import LLMProvider
-from .retriever import HybridRetriever
+from .retriever import Retriever
 from .vector_store import atomic_write_text
 
 SYSTEM_PROMPT = """You answer questions using ONLY the numbered sources in the context. You have no other knowledge.
@@ -55,7 +55,7 @@ _session_lock = threading.RLock()
 
 
 class ChatService:
-    def __init__(self, retriever: HybridRetriever):
+    def __init__(self, retriever: Retriever):
         self.retriever = retriever
         self._provider: LLMProvider | None = None
 
@@ -86,7 +86,6 @@ class ChatService:
             retrieved = self.retriever.search(
                 standalone_query,
                 k_vector=cfg.TOP_K_VECTOR,
-                k_bm25=cfg.TOP_K_BM25,
                 top_n=cfg.TOP_N_FINAL,
                 filters=filters,
             )

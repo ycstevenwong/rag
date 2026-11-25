@@ -19,7 +19,7 @@ class _RecordingRetriever:
 
     def search(self, query, **_kwargs):
         self.queries.append(query)
-        return [RetrievedChunk(ChunkRecord(1, "f", "a fact", 2), 0.1, 0, 0, "a.pdf")]
+        return [RetrievedChunk(ChunkRecord(1, "f", "a fact", 2), 0.1, 0, "a.pdf")]
 
 
 def _searched_for(question: str) -> tuple[str, StubLLM]:

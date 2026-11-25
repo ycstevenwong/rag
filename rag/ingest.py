@@ -16,7 +16,6 @@ from typing import Iterator
 import numpy as np
 
 from . import config_facade as cfg
-from .bm25_store import BM25Store
 from .chunker import chunk_blocks
 from .embeddings import Embedder
 from .parsers import parse
@@ -24,14 +23,8 @@ from .vector_store import ChunkRecord, DocRecord, FaissStore, FileRecord
 
 
 class IngestPipeline:
-    def __init__(
-        self,
-        vector_store: FaissStore,
-        bm25_store: BM25Store,
-        embedder: Embedder,
-    ):
+    def __init__(self, vector_store: FaissStore, embedder: Embedder):
         self.vector_store = vector_store
-        self.bm25_store = bm25_store
         self.embedder = embedder
         # Held across each multi-step change to the stores, never across a
         # yield or an embedding call.
@@ -167,9 +160,6 @@ class IngestPipeline:
                 doc = new_doc(file_id)
                 self.vector_store.add_doc(doc)
                 try:
-                    self.bm25_store.rebuild(
-                        (c.id, c.text) for c in self.vector_store.chunks
-                    )
                     self.vector_store.persist()
                 except BaseException:
                     self._undo_doc(doc.doc_id)
@@ -187,7 +177,6 @@ class IngestPipeline:
         persist may have replaced some of them. If that fails too, the next load
         reports the mismatch."""
         self.vector_store.delete_doc(doc_id)
-        self.bm25_store.rebuild((c.id, c.text) for c in self.vector_store.chunks)
         try:
             self.vector_store.persist()
         except OSError as exc:
@@ -196,10 +185,6 @@ class IngestPipeline:
     def delete(self, doc_id: str) -> int:
         with self._write_lock:
             removed = self.vector_store.delete_doc(doc_id)
-            if removed:
-                self.bm25_store.rebuild(
-                    (c.id, c.text) for c in self.vector_store.chunks
-                )
             self.vector_store.persist()
             return removed
 

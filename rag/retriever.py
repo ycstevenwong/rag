@@ -1,40 +1,36 @@
-"""Hybrid retriever: vector + BM25 fused with Reciprocal Rank Fusion."""
+"""Retriever: vector search, filtered per app, then MMR for variety.
+
+Vector-only. BM25 keyword search was removed because rank_bm25 couldn't be
+installed where the app runs. Exact identifiers (error codes, section numbers)
+now depend on the embedding model to match.
+"""
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
 
 from . import config_facade as cfg
-from .bm25_store import BM25Store
 from .embeddings import Embedder
 from .vector_store import ChunkRecord, DocRecord, FaissStore
 
 
 MMR_LAMBDA = 0.7        # higher = favor query relevance, lower = favor diversity
-MMR_POOL_MULTIPLIER = 3 # consider 3× top_n RRF candidates before MMR picks the final top_n
+MMR_POOL_MULTIPLIER = 3 # consider 3× top_n candidates before MMR picks the final top_n
 
 
 @dataclass
 class RetrievedChunk:
     chunk: ChunkRecord
-    score: float
+    score: float  # cosine similarity to the query
     vector_rank: int | None
-    bm25_rank: int | None
     filename: str = ""
     doc: DocRecord | None = None
 
 
-class HybridRetriever:
-    def __init__(
-        self,
-        vector_store: FaissStore,
-        bm25_store: BM25Store,
-        embedder: Embedder,
-    ):
+class Retriever:
+    def __init__(self, vector_store: FaissStore, embedder: Embedder):
         self.vector_store = vector_store
-        self.bm25_store = bm25_store
         self.embedder = embedder
 
     def search(
@@ -42,26 +38,18 @@ class HybridRetriever:
         query: str,
         *,
         k_vector: int = 20,
-        k_bm25: int = 20,
         top_n: int = 10,
-        rrf_k: int = 60,
         filters: dict | None = None,
     ) -> list[RetrievedChunk]:
         if not self.vector_store.chunks:
             return []
 
         q_vec = self.embedder.encode_query(query)
-        # Filters run after the searches, so a filtered query has to consider
-        # every chunk: its matches can rank anywhere. The loops below stop as soon
-        # as k_vector and k_bm25 matches are found.
-        n_chunks = len(self.vector_store.chunks)
-        fetch_vector = n_chunks if filters else k_vector
-        fetch_bm25 = n_chunks if filters else k_bm25
-        with ThreadPoolExecutor(max_workers=2) as ex:
-            vec_future = ex.submit(self.vector_store.search, q_vec, fetch_vector)
-            bm25_future = ex.submit(self.bm25_store.search, query, fetch_bm25)
-            vec_results = vec_future.result()
-            bm25_results = bm25_future.result()
+        # Filters run after the search, so a filtered query has to consider every
+        # chunk: its matches can rank anywhere. The loop below stops as soon as
+        # k_vector matches are found.
+        fetch = len(self.vector_store.chunks) if filters else k_vector
+        vec_results = self.vector_store.search(q_vec, fetch)
 
         # For each surviving chunk, remember which DocRecord we matched
         # against — used for citation metadata downstream.
@@ -83,39 +71,18 @@ class HybridRetriever:
                     return True
             return False
 
-        vec_ranks: dict[int, int] = {}
-        for chunk, _score in vec_results:
+        ranked: list[tuple[int, float]] = []
+        for chunk, score in vec_results:
             if chunk_passes(chunk.id):
-                vec_ranks[chunk.id] = len(vec_ranks)
-                if len(vec_ranks) >= k_vector:
+                ranked.append((chunk.id, score))
+                if len(ranked) >= k_vector:
                     break
+        rank_by_id = {cid: i for i, (cid, _) in enumerate(ranked)}
+        score_by_id = dict(ranked)
 
-        bm25_ranks: dict[int, int] = {}
-        for chunk_id, _score in bm25_results:
-            if chunk_passes(chunk_id):
-                bm25_ranks[chunk_id] = len(bm25_ranks)
-                if len(bm25_ranks) >= k_bm25:
-                    break
-
-        all_ids = set(vec_ranks) | set(bm25_ranks)
-        fused: list[tuple[int, float]] = []
-        for cid in all_ids:
-            s = 0.0
-            if cid in vec_ranks:
-                s += 1.0 / (rrf_k + vec_ranks[cid] + 1)
-            if cid in bm25_ranks:
-                s += 1.0 / (rrf_k + bm25_ranks[cid] + 1)
-            fused.append((cid, s))
-
-        fused.sort(key=lambda x: x[1], reverse=True)
-        fused_score_by_id = {cid: s for cid, s in fused}
-
-        # Apply MMR over a larger RRF pool, then take top_n.
-        pool_size = min(len(fused), max(top_n * MMR_POOL_MULTIPLIER, top_n))
-        pool_ids = [cid for cid, _ in fused[:pool_size]]
-        selected_ids = _mmr_select(
-            pool_ids, fused_score_by_id, self.vector_store, top_n, lambda_=MMR_LAMBDA
-        )
+        # Apply MMR over a larger pool, then take top_n.
+        pool_ids = [cid for cid, _ in ranked[: max(top_n * MMR_POOL_MULTIPLIER, top_n)]]
+        selected_ids = _mmr_select(pool_ids, score_by_id, self.vector_store, top_n, lambda_=MMR_LAMBDA)
 
         out: list[RetrievedChunk] = []
         for cid in selected_ids:
@@ -127,9 +94,8 @@ class HybridRetriever:
             filename = (doc.filename if doc else "") or (file.filename if file else "")
             out.append(RetrievedChunk(
                 chunk=chunk,
-                score=fused_score_by_id.get(cid, 0.0),
-                vector_rank=vec_ranks.get(cid),
-                bm25_rank=bm25_ranks.get(cid),
+                score=score_by_id[cid],
+                vector_rank=rank_by_id[cid],
                 filename=filename,
                 doc=doc,
             ))
@@ -138,7 +104,7 @@ class HybridRetriever:
 
 def _mmr_select(
     candidate_ids: list[int],
-    fused_scores: dict[int, float],
+    scores: dict[int, float],
     vector_store: FaissStore,
     top_n: int,
     *,
@@ -151,13 +117,10 @@ def _mmr_select(
         lambda_ * rel(c) - (1 - lambda_) * max_{s in selected} sim(c, s)
     so the final set is relevant but doesn't pile up near-duplicates.
 
-    rel(c) is the RRF fused score, min-max normalized over the pool to [0, 1]
-    so it sits on the same scale as cosine similarity. Using the fused score
-    (not query cosine) keeps BM25's vote: a chunk that only matches on an exact
-    identifier (e.g. an error code) has weak vector similarity and would
-    otherwise be pushed out here. sim(c, s) stays cosine — redundancy between
-    two chunks is a content question, which embeddings answer well. Vectors are
-    already L2-normalized, so dot products are cosine similarities.
+    rel(c) is the query similarity, min-max normalized over the pool to [0, 1]
+    so the most relevant candidate always scores 1. sim(c, s) is cosine between
+    candidates. Vectors are already L2-normalized, so dot products are cosine
+    similarities.
     """
     if len(candidate_ids) <= top_n:
         return list(candidate_ids)
@@ -166,7 +129,7 @@ def _mmr_select(
     if not kept_ids:
         return list(candidate_ids)[:top_n]
 
-    raw = np.array([fused_scores.get(cid, 0.0) for cid in kept_ids], dtype=np.float32)
+    raw = np.array([scores.get(cid, 0.0) for cid in kept_ids], dtype=np.float32)
     span = float(raw.max() - raw.min())
     relevance = (raw - raw.min()) / span if span > 0 else np.ones_like(raw)  # shape (N,)
 
